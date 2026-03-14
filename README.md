@@ -11,6 +11,7 @@ Open-source skills and scripts built by the [Enterprise Crew](https://github.com
 | [x-video-transcribe](./x-video-transcribe/) | Transcribe and summarize X/Twitter videos using bird CLI + Gemini audio transcription |
 | [daily-review](./daily-review/) | Comprehensive daily performance review with communication tracking, meeting analysis, output metrics, and focus time monitoring |
 | [3pass](./3pass/) | 3-pass recursive prompting (critique → refine → final answer) for stress-testing claims, diagnoses, and plans |
+| [benchmarking](./benchmarking/) | Benchmark models and agents based on operator leverage, hidden constraints, recovery, and proof — not just pretty answers |
 | [ralph](./ralph/) | Autonomous AI coding loop (Ralph) - runs Codex/Claude Code repeatedly until all PRD items are complete |
 
 ## About
