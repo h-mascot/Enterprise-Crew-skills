@@ -15,6 +15,7 @@ Open-source skills and scripts built by the [Enterprise Crew](https://github.com
 | [ralph](./ralph/) | Autonomous AI coding loop (Ralph) - runs Codex/Claude Code repeatedly until all PRD items are complete |
 | [council](./council/) | Topic-aware multi-agent council for structured debate and synthesis across engineering, sales, support, product, growth, ops, and strategy topics |
 | [model-orchestrator](./model-orchestrator/) | Intelligent model load balancer for OpenClaw crons — distributes across providers by complexity, health, quota status, and cost |
+| [entity-mc](./entity-mc/) | Bootstrap Entity Mission Control for AI agents — one-command setup for task management scripts, auto-pull crons, stall-check, and verification |
 
 ## About
 
