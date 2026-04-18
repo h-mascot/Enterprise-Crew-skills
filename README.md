@@ -17,6 +17,7 @@ Open-source skills and scripts built by the [Enterprise Crew](https://github.com
 | [model-orchestrator](./model-orchestrator/) | Intelligent model load balancer for OpenClaw crons — distributes across providers by complexity, health, quota status, and cost |
 | [entity-mc](./entity-mc/) | Bootstrap Entity Mission Control for AI agents — one-command setup for task management scripts, auto-pull crons, stall-check, and verification |
 | [exec-approvals](./exec-approvals/) | Manage all OpenClaw exec approval settings — elevated access, obfuscation bypass, security posture, and per-provider allowlists |
+| [release-manager](./release-manager/) | Turn shipped git activity into release candidates with suggested versions, changelog drafts, GitHub release notes, and launch-copy drafts |
 
 ## About
 
