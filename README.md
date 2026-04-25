@@ -19,6 +19,7 @@ Open-source skills and scripts built by the [Enterprise Crew](https://github.com
 | [exec-approvals](./exec-approvals/) | Manage all OpenClaw exec approval settings — elevated access, obfuscation bypass, security posture, and per-provider allowlists |
 | [release-manager](./release-manager/) | Turn shipped git activity into release candidates with suggested versions, changelog drafts, GitHub release notes, and launch-copy drafts |
 | [self-healing](./self-healing/) | Wrap fragile OpenClaw work in checkpoints, fallback-model retries, watchdog crons, and proof-of-completion |
+| [compound-engineering](./compound-engineering/) | Compound Engineering suite for CE planning, work execution, debugging, code review, PR workflows, and knowledge-compounding with specialist agents |
 
 ## About
 
