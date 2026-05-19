@@ -1,0 +1,45 @@
+{
+  "schema": "openclaw-beta-issue-intelligence.v1",
+  "updated_at": "2026-01-01T00:00:00Z",
+  "issues": [
+    {
+      "id": "owner/repo#123",
+      "repo": "owner/repo",
+      "number": 123,
+      "url": "https://github.com/owner/repo/issues/123",
+      "title": "[Bug]: beta canary failure summary",
+      "submitted_at": "2026-01-01T00:00:00Z",
+      "submitted_by": "operator",
+      "source": {
+        "kind": "openclaw-beta-canary",
+        "mc_task": 123,
+        "target": "non-primary canary host",
+        "beta_version": "2026.x.y-beta.z",
+        "report_path": "output/openclaw-beta/YYYY-MM-DD-agent-canary-report.md"
+      },
+      "status": "open",
+      "tracking_status": "needs-info-from-us",
+      "last_checked_at": "2026-01-01T00:00:00Z",
+      "last_state": {
+        "state": "open",
+        "labels": [
+          "bug"
+        ],
+        "comments": 1
+      },
+      "followups": [
+        {
+          "at": "2026-01-01T01:00:00Z",
+          "kind": "external-comment-submitted",
+          "summary": "Added requested diagnostics and narrowed expected vs actual behavior.",
+          "result": "Maintainer has enough evidence to triage.",
+          "next_action": "Retest when a fixed build is available."
+        }
+      ],
+      "learning": {
+        "initial_lesson": "Include exact version, install path, repro, expected behavior, actual behavior, and redacted diagnostics.",
+        "outcome_lesson": "Update this after the issue is accepted, fixed, duplicated, or rejected."
+      }
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+display_name: OpenClaw Beta Testing
+short_description: Run OpenClaw beta canaries, deep test plans, and evidence-backed reports.
+default_prompt: Create an MC-backed OpenClaw beta canary plan with self-healing checkback and a report template.
