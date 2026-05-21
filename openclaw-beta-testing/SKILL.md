@@ -231,6 +231,12 @@ The cron must:
 7. Choose exactly one action outcome: external comment, internal lesson, retest queued, or no-action-with-reason.
 8. Stay quiet or produce a no-change summary when nothing changed.
 
+Cron implementation notes:
+
+- Prefer a cheap, allowlisted orchestration model for this loop; the checker is deterministic and should not burn premium reasoning by default.
+- If the operator workspace is not a git repository, explicitly tell the cron runner to skip git status or repository hygiene preflights and run the checker directly.
+- Restrict tools to the minimum needed for the checker run when the cron platform supports tool allow-lists.
+
 The cron must not:
 
 - spam GitHub comments
