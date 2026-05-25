@@ -22,6 +22,7 @@ Open-source skills and scripts built by the [Enterprise Crew](https://github.com
 | [release-manager](./release-manager/) | Turn shipped git activity into release candidates with suggested versions, changelog drafts, GitHub release notes, and launch-copy drafts |
 | [self-healing](./self-healing/) | Wrap fragile OpenClaw work in checkpoints, fallback-model retries, watchdog crons, and proof-of-completion |
 | [superada-weekly-watch](./superada-weekly-watch/) | Subscribe an agent to SuperAda updates with a weekly watcher that reports only what changed |
+| [conference-prep](./conference-prep/) | End-to-end conference preparation: research, pitch-deck brief, scheduler, contact enrichment, session notes, and post-event follow-ups |
 
 ## About
 
