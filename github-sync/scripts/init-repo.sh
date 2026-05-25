@@ -133,7 +133,8 @@ gh repo create "$GH_USER/$REPO_NAME" --public --source=. --remote=origin
 # Push to GitHub
 echo
 echo "Pushing to GitHub..."
-git push -u origin main
+CURRENT_BRANCH="$(git branch --show-current)"
+git push -u origin "$CURRENT_BRANCH"
 
 echo
 echo "✓ Repository initialized successfully!"

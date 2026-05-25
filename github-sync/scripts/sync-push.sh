@@ -37,6 +37,7 @@ fi
 # Enforce PR governance before pushing directly to an established default branch.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_BRANCH=""
+RUN_POST_PUSH_GOVERNANCE=false
 if [ "${GITHUB_SYNC_ENFORCE_PR_GOVERNANCE:-1}" = "1" ] && [ -x "$SCRIPT_DIR/pr-governance.sh" ]; then
   BASE_BRANCH="${PR_GOVERNANCE_BASE:-}"
   if [ -z "$BASE_BRANCH" ]; then
@@ -51,6 +52,19 @@ if [ "${GITHUB_SYNC_ENFORCE_PR_GOVERNANCE:-1}" = "1" ] && [ -x "$SCRIPT_DIR/pr-g
     if [ "$CLASSIFICATION" = "existing" ]; then
       echo "Error: Existing codebases require a feature branch, PR, and Henry approval."
       echo "Create a branch, push it, then run: $SCRIPT_DIR/pr-governance.sh"
+      exit 2
+    fi
+  fi
+
+  if [ "${GITHUB_SYNC_PR_GOVERNANCE_AFTER_PUSH:-1}" = "1" ] && [ "$BRANCH" != "$BASE_BRANCH" ]; then
+    RUN_POST_PUSH_GOVERNANCE=true
+    if ! command -v gh >/dev/null 2>&1; then
+      echo "Error: gh CLI is required before pushing feature branches through PR governance."
+      exit 2
+    fi
+    if ! gh auth status >/dev/null 2>&1; then
+      echo "Error: gh authentication is required before pushing feature branches through PR governance."
+      echo "Run: $SCRIPT_DIR/fix-auth.sh"
       exit 2
     fi
   fi
@@ -72,29 +86,45 @@ EXCLUDE_PATTERNS=(
   '__pycache__/'
 )
 
-# Build grep exclude pattern
-GREP_EXCLUDE=""
-for pattern in "${EXCLUDE_PATTERNS[@]}"; do
-  GREP_EXCLUDE="$GREP_EXCLUDE -e $pattern"
-done
+should_exclude() {
+  local file="$1"
+  local pattern
+  for pattern in "${EXCLUDE_PATTERNS[@]}"; do
+    if [[ "$file" =~ $pattern ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
 
-# Get changed files (modified and untracked, excluding patterns)
-CHANGED=$(git status --porcelain 2>/dev/null | \
-  grep -E '^\s*M\s+|^\?\?\s+' | \
-  grep -v $GREP_EXCLUDE | \
-  awk '{print $2}' || true)
+# Get changed files, including staged adds, deletes, renames, and paths with
+# spaces. The NUL format avoids shell quoting issues; rename entries include
+# a second old-path record, which does not start with a porcelain status.
+CHANGED_FILES=()
+while IFS= read -r -d '' entry; do
+  [ -n "$entry" ] || continue
+  if [[ ! "$entry" =~ ^..\  ]]; then
+    continue
+  fi
+  file="${entry:3}"
+  [ -n "$file" ] || continue
+  if should_exclude "$file"; then
+    continue
+  fi
+  CHANGED_FILES+=("$file")
+done < <(git status --porcelain -z 2>/dev/null)
 
-if [ -z "$CHANGED" ]; then
+if [ "${#CHANGED_FILES[@]}" -eq 0 ]; then
   echo "No changes to push"
   exit 0
 fi
 
 echo "Staging files:"
-echo "$CHANGED" | sed 's/^/  /'
+printf '  %s\n' "${CHANGED_FILES[@]}"
 echo
 
 # Stage files
-echo "$CHANGED" | xargs git add
+git add -- "${CHANGED_FILES[@]}"
 
 # Commit with provided message or default timestamp
 MSG="${1:-Auto-sync $(date '+%Y-%m-%d %H:%M')}"
@@ -117,16 +147,8 @@ else
   exit 1
 fi
 
-if [ "${GITHUB_SYNC_ENFORCE_PR_GOVERNANCE:-1}" = "1" ] && \
-   [ "${GITHUB_SYNC_PR_GOVERNANCE_AFTER_PUSH:-1}" = "1" ] && \
-   [ -x "$SCRIPT_DIR/pr-governance.sh" ]; then
-  if [ -z "$BASE_BRANCH" ]; then
-    BASE_BRANCH="${PR_GOVERNANCE_BASE:-main}"
-  fi
-
-  if [ "$BRANCH" != "$BASE_BRANCH" ]; then
-    echo
-    echo "Running PR governance for $BRANCH -> $BASE_BRANCH..."
-    PR_GOVERNANCE_BASE="$BASE_BRANCH" "$SCRIPT_DIR/pr-governance.sh" --head "$BRANCH"
-  fi
+if [ "$RUN_POST_PUSH_GOVERNANCE" = true ]; then
+  echo
+  echo "Running PR governance for $BRANCH -> $BASE_BRANCH..."
+  PR_GOVERNANCE_BASE="$BASE_BRANCH" "$SCRIPT_DIR/pr-governance.sh" --head "$BRANCH"
 fi
