@@ -24,6 +24,7 @@ Open-source skills and scripts built by the [Enterprise Crew](https://github.com
 | [superada-weekly-watch](./superada-weekly-watch/) | Subscribe an agent to SuperAda updates with a weekly watcher that reports only what changed |
 | [conference-prep](./conference-prep/) | End-to-end conference preparation: research, pitch-deck brief, scheduler, contact enrichment, session notes, and post-event follow-ups |
 | [github-sync](./github-sync/) | Repository initialization, authentication, PR governance, and cross-machine synchronization workflows |
+| [image-taste](./image-taste/) | Elite website image-to-code skill. Generates premium design images first, deeply analyzes them, then implements. Preferred in Codex for visual web tasks with separate readable images per section. |
 
 ## About
 
