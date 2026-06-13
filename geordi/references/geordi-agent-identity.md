@@ -21,6 +21,17 @@ Ada (🔮) is the orchestrator — she assigns work and coordinates. You build w
 Report with: Done / Verification / Files changed / Blocked.
 Ask for operator input before secrets, credentials, destructive changes, or ambiguous product decisions.
 
+## Runtimes
+
+You can run missions through any of the four supported runtimes:
+
+- `codex` — OpenAI Codex CLI
+- `droid` — Factory Droid CLI (BYOK / custom endpoints)
+- `cursor` — Cursor Agent CLI
+- `claude` — Anthropic Claude Code CLI
+
+Pick the runtime that matches the repo's primary toolchain. Re-run with a different runtime if the first one fails verification, but keep the same mission contract.
+
 ## Close the Loop
 
 **Before reporting any task done, you MUST:**

@@ -1,14 +1,23 @@
 # Changelog
 
+## 1.2.0 + Oracle review
+
+- Fixes runtime dispatch so `--mode cursor` checks and runs `cursor-agent` instead of looking for a `cursor` binary.
+- `geordi run --mode codex --model MODEL_ID` now forwards the model to Codex instead of silently ignoring it.
+- Tightens flag handling: required flags (`--goal`, `--accept`) now produce a clear `ERROR: --flag is required` message, while optional flags (`--mode`, `--model`, `--scope`) are silently treated as absent when missing or empty (so a trailing `--model` no longer aborts a run).
+- Removes the unused `json_escape` helper.
+- Loads optional project defaults from `.geordi.env`.
+- Sanitizes public install examples and the streamed installer tarball path; streamed installs now require `GEORDI_TARBALL_URL`.
+- Documents Cursor credential-store failures and Windows installer expectations.
+
 ## 1.2.0
 
-- Adds `cursor` mode that runs missions through the `cursor-agent` CLI (headless print mode).
-- Adds `claude` mode that runs missions through the `claude` CLI (Claude Code, non-interactive print mode).
-- Expands `geordi doctor`, `geordi init`, and `geordi run` to accept all four runtimes: `codex`, `droid`, `cursor`, `claude`.
-- Adds `GEORDI_CURSOR_ARGS` and `GEORDI_CLAUDE_ARGS` environment overrides for per-runtime flag customization.
-- Adds `examples/cursor-goal.md` and `examples/claude-goal.md` showing minimal goal/mission flow.
-- Refreshes `SKILL.md` with a Cursor mode section and a Claude mode section; metadata tags gain `cursor` and `claude`.
-- Bumps the pinned installer tarball tag to `v1.2.0`.
+- Adds **Cursor** and **Claude Code** runtimes alongside Codex and Droid. Geordi now supports four modes: `codex`, `droid`, `cursor`, `claude`.
+- New environment overrides: `GEORDI_CURSOR_ARGS` (default `-p --trust --output-format text`) and `GEORDI_CLAUDE_ARGS` (default `-p --dangerously-skip-permissions --output-format text`).
+- `geordi doctor` now validates `cursor-agent` and `claude` on `PATH` when those modes are requested.
+- `geordi run --model` is honored by Codex, Droid, Cursor, and Claude Code runtimes.
+- Adds `examples/cursor-goal.md` and `examples/claude-goal.md`.
+- Updates build-loop and agent-identity references to document the four runtimes.
 
 ## 1.1.1
 

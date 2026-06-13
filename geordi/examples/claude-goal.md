@@ -1,32 +1,23 @@
-# Example Claude goal
+# Example Claude Code goal
 
-Goal: Use Claude Code (`claude` CLI) to repair a flaky end-to-end checkout
-test. Claude is a last-resort runtime here because Codex and Droid are both
-rate-limited on the operator's accounts.
+Goal: Add OAuth refresh-token rotation in a repo whose primary tool is Claude Code.
 
 Install and run:
 
 ```bash
-geordi init --goal "Stabilize flaky checkout E2E" --mode claude
-geordi mission add "Stabilize checkout E2E test by replacing time-based waits with explicit element waits" \
-  --accept "npm run test:e2e -- checkout" \
-  --scope "Checkout E2E spec and any helpers it imports. Do not touch other flows."
-geordi run --mode claude --model sonnet
+geordi init --goal "Add OAuth refresh-token rotation" --mode claude
+geordi mission add "Implement refresh-token rotation and tests" --accept "npm test -- auth" --scope "Auth flow, refresh helper, and tests only."
+geordi run --mode claude --model "sonnet"
 ```
 
 If your shared agent rules live outside the default `~/.agents/AGENTS.md` path:
 
 ```bash
-GEORDI_AGENTS_FILE=/path/to/AGENTS.md geordi run --mode claude --model sonnet
+GEORDI_AGENTS_FILE=/path/to/AGENTS.md geordi run --mode claude --model "sonnet"
 ```
 
-To override the default `claude` flags (rarely needed):
+For stricter sandboxed runs, prefer the explicit permission mode override:
 
 ```bash
-GEORDI_CLAUDE_ARGS="-p --dangerously-skip-permissions --output-format text" geordi run --mode claude
+GEORDI_CLAUDE_ARGS="-p --permission-mode bypassPermissions --output-format text" geordi run --mode claude --model "sonnet"
 ```
-
-The `claude` runtime is the Claude Code CLI. Install it from Anthropic's
-official docs and verify with `command -v claude` before running. The
-`--dangerously-skip-permissions` flag is intended for sandboxed/headless runs
-only; do not use it in interactive shells.

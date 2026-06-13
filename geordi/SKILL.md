@@ -1,6 +1,6 @@
 ---
 name: geordi
-description: Use when turning a coding goal or PRD into bounded build missions, running those missions with Codex, Droid, Cursor Agent, or Claude Code, verifying outcomes separately, and preserving receipts. Geordi merges the former build-pipeline discipline with the installable mission runner.
+description: Use when turning a coding goal or PRD into bounded build missions, running those missions through Codex, Droid, Cursor, or Claude Code, verifying outcomes separately, and preserving receipts. Geordi merges the former build-pipeline discipline with the installable mission runner.
 version: 1.2.0
 author: SuperAda
 license: MIT
@@ -10,7 +10,7 @@ metadata:
 
 # Geordi
 
-Geordi is the builder workflow for goal-driven coding work. It combines the former build-pipeline discipline — context first, implementation second, independent verification, retries, and receipts — with an installable CLI that can run bounded missions through Codex or Droid.
+Geordi is the builder workflow for goal-driven coding work. It combines build-pipeline discipline - context first, implementation second, independent verification, retries, and receipts - with an installable CLI that can run bounded missions through Codex, Droid, Cursor Agent, or Claude Code.
 
 The machinery is intentionally plain: define a goal, add missions, run one runtime at a time, verify with real commands, and leave logs behind. Less mysticism. More receipts.
 
@@ -20,7 +20,7 @@ The machinery is intentionally plain: define a goal, add missions, run one runti
 - Breaks work into **missions**: bounded implementation units with acceptance checks.
 - Loads project context before building.
 - Prepends the shared global `AGENTS.md` context before every mission prompt.
-- Runs missions through **Codex**, **Droid**, **Cursor Agent**, or **Claude Code**.
+- Runs missions through **Codex**, **Droid**, **Cursor**, or **Claude Code**.
 - Keeps state in `.geordi/state/` so runs can be resumed or audited.
 - Separates implementation from verification.
 - Captures receipts: prompts, command logs, verification logs, and git status before/after.
@@ -30,14 +30,15 @@ The machinery is intentionally plain: define a goal, add missions, run one runti
 From the source repo:
 
 ```bash
-git clone https://github.com/h-mascot/Enterprise-Crew-skills.git /tmp/enterprise-crew-skills
-bash /tmp/enterprise-crew-skills/geordi/install.sh
+git clone https://github.com/OWNER/REPO.git /tmp/geordi-source
+bash /tmp/geordi-source/geordi/install.sh
 ```
 
-Or one line, pinned to the public release:
+Or one line, pinned to the public release. Set `GEORDI_TARBALL_URL` to the matching source archive so streamed installs can locate the bundle:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/h-mascot/Enterprise-Crew-skills/v1.2.0/geordi/install.sh)
+GEORDI_TARBALL_URL=https://codeload.github.com/OWNER/REPO/tar.gz/refs/tags/v1.2.0 \
+  bash <(curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/v1.2.0/geordi/install.sh)
 ```
 
 The installer copies the bundle into `~/.geordi`, creates `~/.local/bin/geordi`, and prints a verification command.
@@ -51,6 +52,8 @@ geordi mission add "Add settings toggle" --accept "npm test"
 geordi run --mode codex
 geordi status
 ```
+
+Pick any of the four supported runtimes. Use `--model MODEL_ID` where the runtime supports it (Codex, Droid, Cursor, Claude).
 
 ## Global AGENTS context
 
@@ -76,22 +79,22 @@ GEORDI_REQUIRE_AGENTS=0 geordi run --mode codex
 
 `geordi doctor` checks the global file unless `GEORDI_REQUIRE_AGENTS=0` is set.
 
-Droid version:
+Project-local defaults can live in `.geordi.env`:
 
 ```bash
-cd /path/to/repo
-geordi init --goal "Fix checkout form validation" --mode droid
-geordi mission add "Repair validation and errors" --accept "npm test"
-geordi run --mode droid --model "custom:Your-Model-0"
+GEORDI_CODEX_ARGS="exec --full-auto"
+GEORDI_DROID_AUTO="medium"
+GEORDI_CURSOR_ARGS="-p --trust --output-format text"
+GEORDI_CLAUDE_ARGS="-p --dangerously-skip-permissions --output-format text"
 ```
 
 ## Mission contract
 
 Each mission should include:
 
-- **Title** — what to change.
-- **Acceptance command** — what proves it worked.
-- **Scope note** — what not to touch, if relevant.
+- **Title** - what to change.
+- **Acceptance command** - what proves it worked.
+- **Scope note** - what not to touch, if relevant.
 
 Example:
 
@@ -106,9 +109,11 @@ Good missions are small enough to verify in one command. If a mission needs five
 
 ## Runtime modes
 
+Geordi dispatches missions to one of four supported runtimes. Pick the one that fits the task and the model you want to use.
+
 ### Codex mode
 
-Uses `codex exec` from the current git repository.
+Uses `codex exec` from the current git repository, with optional `--model`.
 
 Good for:
 
@@ -123,10 +128,23 @@ Default command shape:
 codex exec --full-auto "<mission prompt>"
 ```
 
+With `--model`:
+
+```bash
+codex exec --full-auto --model "$MODEL" "<mission prompt>"
+```
+
 Override with:
 
 ```bash
-GEORDI_CODEX_ARGS="exec --full-auto" geordi run --mode codex
+GEORDI_CODEX_ARGS="exec --full-auto" geordi run --mode codex --model "gpt-5"
+```
+
+```bash
+cd /path/to/repo
+geordi init --goal "Ship dark mode settings" --mode codex
+geordi mission add "Add settings toggle" --accept "npm test"
+geordi run --mode codex --model "gpt-5"
 ```
 
 ### Droid mode
@@ -152,15 +170,22 @@ Override with:
 GEORDI_DROID_AUTO=low geordi run --mode droid --model "custom:Your-Model-0"
 ```
 
+```bash
+cd /path/to/repo
+geordi init --goal "Fix checkout form validation" --mode droid
+geordi mission add "Repair validation and errors" --accept "npm test"
+geordi run --mode droid --model "custom:Your-Model-0"
+```
+
 ### Cursor mode
 
-Uses the `cursor-agent` CLI (headless print mode) from a Cursor install.
+Uses the `cursor-agent` CLI in headless print mode.
 
 Good for:
 
-- Repos where the Cursor editor / `cursor-agent` is the primary tool
-- Running headless missions through the Cursor agent tier
-- BYO `--model` routing (e.g. `gpt-5`, `sonnet`, or another supported model ID)
+- Cursor editor users who want the same agent in a terminal
+- repos where Cursor's model routing is already configured
+- UI/code tasks where Cursor's editor-aware context is useful
 
 Default command shape:
 
@@ -168,23 +193,30 @@ Default command shape:
 cursor-agent -p --trust --output-format text --model "$MODEL" "<mission prompt>"
 ```
 
-Override flags with:
+`-p` runs Cursor in headless print mode. `--trust` auto-accepts the workspace trust dialog so the run is non-interactive. `--output-format text` produces a clean text receipt for the log file.
+
+Override with:
 
 ```bash
-GEORDI_CURSOR_ARGS="-p --trust --output-format text" geordi run --mode cursor --model gpt-5
+GEORDI_CURSOR_ARGS="-p --trust --output-format stream-json" geordi run --mode cursor --model "gpt-5"
 ```
 
-If `--model` is omitted, `cursor-agent` falls back to its configured default.
+```bash
+cd /path/to/repo
+geordi init --goal "Refactor settings panel into shared component" --mode cursor
+geordi mission add "Extract SettingsPanel and add unit tests" --accept "npm test -- settings"
+geordi run --mode cursor --model "gpt-5"
+```
 
-### Claude mode
+### Claude Code mode
 
-Uses the `claude` CLI (Claude Code) in non-interactive print mode.
+Uses the `claude` CLI in non-interactive print mode.
 
 Good for:
 
-- Repos with a `CLAUDE.md` / `.claude/` setup that already drives Claude Code
-- Sandboxed / headless runs where a self-contained agent is preferred
-- Last-resort fallback when Codex, Droid, and Cursor are rate-limited
+- Claude-Code-native repos with a `CLAUDE.md` or `.claude/` config
+- missions that benefit from Claude's instruction-following and tool use
+- sandboxes where you need a self-contained, non-interactive agent
 
 Default command shape:
 
@@ -192,13 +224,31 @@ Default command shape:
 claude -p --dangerously-skip-permissions --output-format text --model "$MODEL" "<mission prompt>"
 ```
 
-Override flags with:
+`-p` runs Claude in non-interactive print mode. `--dangerously-skip-permissions` is intended for sandboxed/headless runs where the agent should not be blocked on permission prompts. `--output-format text` produces a clean text receipt for the log file.
+
+Override with:
 
 ```bash
-GEORDI_CLAUDE_ARGS="-p --dangerously-skip-permissions --output-format text" geordi run --mode claude --model sonnet
+GEORDI_CLAUDE_ARGS="-p --permission-mode bypassPermissions --output-format text" geordi run --mode claude --model "sonnet"
 ```
 
-`--dangerously-skip-permissions` is for sandboxed/headless runs only; do not use it in interactive shells. If `--model` is omitted, the Claude CLI uses its configured default.
+```bash
+cd /path/to/repo
+geordi init --goal "Add OAuth refresh-token rotation" --mode claude
+geordi mission add "Implement refresh-token rotation and tests" --accept "npm test -- auth"
+geordi run --mode claude --model "sonnet"
+```
+
+### Choosing a mode
+
+| Mode | Best for | Authentication | Model flag |
+|------|----------|----------------|------------|
+| `codex` | Codex-default flows | Codex login | `--model` |
+| `droid` | BYOK / custom endpoints | Droid login | `--model` |
+| `cursor` | Cursor editor workflows | Cursor login | `--model` |
+| `claude` | Claude Code workflows | Claude login | `--model` |
+
+If a runtime is missing, install it and re-run `geordi doctor`. The CLI does not bundle any of these agents. Cursor can also fail in unattended shells when its OS credential store is locked or no login exists; run a one-time interactive Cursor Agent login, then retry.
 
 ## Context-first build loop
 
@@ -255,7 +305,7 @@ Use Geordi when the work is larger than a single prompt but smaller than a full 
 
 - Build a feature across a few files.
 - Convert a PRD into a sequence of agent missions.
-- Run the same mission through Codex or Droid and compare results.
+- Run the same mission through Codex, Droid, Cursor, or Claude Code and compare results.
 - Keep receipts for agent work without building a control plane.
 - Continue the former build-pipeline workflow under the shorter `geordi` name.
 
@@ -264,7 +314,7 @@ Do not use Geordi for:
 - one-line edits where a normal direct change is cleaner
 - destructive repo rewrites without explicit operator approval
 - secrets, credentials, payment flows, or private data entry
-- unbounded “go improve the whole codebase” prompts
+- unbounded "go improve the whole codebase" prompts
 
 ## Verification
 
@@ -276,9 +326,17 @@ Checks:
 
 - bundle installed
 - target directory is a git repo
-- requested runtime exists (`codex` or `droid`)
+- requested runtime exists (`codex`, `droid`, `cursor-agent`, or `claude`; `--mode cursor` checks `cursor-agent`)
 - mission file is parseable
 - acceptance command is available for each mission
+
+To check a specific runtime:
+
+```bash
+geordi doctor --mode codex
+geordi doctor --mode cursor
+geordi doctor --mode claude
+```
 
 ## Common pitfalls
 
@@ -287,6 +345,9 @@ Checks:
 3. **Treating agent success as real success.** The acceptance command is the proof.
 4. **Committing generated dirt.** Review `git status --short` before committing.
 5. **Leaking private environment details.** Keep model IDs, internal hosts, private paths, and secrets out of public missions and docs.
+6. **Forgetting to install the runtime.** `cursor-agent` is a separate package from the Cursor editor; install it from the Cursor docs before using `--mode cursor`.
+7. **Locked Cursor credentials.** If `cursor-agent` exists but fails before the prompt runs, unlock the OS credential store or refresh Cursor Agent login interactively.
+8. **Windows shell mismatch.** Use WSL or Git Bash for the installer and tarball extraction; PowerShell needs an equivalent manual download/copy flow.
 
 ## Verification checklist
 
@@ -296,3 +357,4 @@ Checks:
 - [ ] `geordi mission add` appends valid JSONL.
 - [ ] `geordi run` writes prompt/log/verification receipts.
 - [ ] Acceptance command output is preserved in `.geordi/state/*/*.verify.log`.
+- [ ] The chosen runtime (`codex`, `droid`, `cursor-agent`, or `claude`) is on `PATH` before `geordi run`.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_TARBALL_URL="${GEORDI_TARBALL_URL:-https://codeload.github.com/h-mascot/Enterprise-Crew-skills/tar.gz/refs/tags/v1.2.0}"
+REPO_TARBALL_URL="${GEORDI_TARBALL_URL:-}"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="${GEORDI_HOME:-$HOME/.geordi}"
 BIN_DIR="${GEORDI_BIN_DIR:-$HOME/.local/bin}"
@@ -17,6 +17,11 @@ trap cleanup EXIT
 # When run as `bash <(curl ...)`, BASH_SOURCE points at /dev/fd instead of a
 # checked-out bundle. Fetch the public repository tarball and install from it.
 if [ ! -f "$SOURCE_DIR/SKILL.md" ] || [ ! -d "$SOURCE_DIR/scripts" ]; then
+  [ -n "$REPO_TARBALL_URL" ] || {
+    echo "ERROR: GEORDI_TARBALL_URL is required when installing from a streamed script" >&2
+    echo "Example: GEORDI_TARBALL_URL=https://codeload.github.com/OWNER/REPO/tar.gz/refs/tags/v1.2.0 bash <(curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/v1.2.0/geordi/install.sh)" >&2
+    exit 1
+  }
   command -v curl >/dev/null 2>&1 || { echo "ERROR: curl is required for remote install" >&2; exit 1; }
   command -v tar >/dev/null 2>&1 || { echo "ERROR: tar is required for remote install" >&2; exit 1; }
   TEMP_DIR="$(mktemp -d)"
