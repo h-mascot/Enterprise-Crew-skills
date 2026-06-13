@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="1.1.1"
+VERSION="1.2.0"
 ROOT="${GEORDI_PROJECT_ROOT:-$PWD}"
 STATE_DIR="$ROOT/.geordi"
 MISSION_FILE="$STATE_DIR/missions.jsonl"
@@ -13,18 +13,20 @@ Geordi — bounded build missions for coding agents
 
 Usage:
   geordi --version
-  geordi doctor [--mode codex|droid]
-  geordi init --goal TEXT [--mode codex|droid]
+  geordi doctor [--mode codex|droid|cursor|claude]
+  geordi init --goal TEXT [--mode codex|droid|cursor|claude]
   geordi mission add TITLE --accept COMMAND [--scope TEXT]
-  geordi run [--mode codex|droid] [--model MODEL_ID]
+  geordi run [--mode codex|droid|cursor|claude] [--model MODEL_ID]
   geordi status
 
 Environment:
-  GEORDI_CODEX_ARGS   default: exec --full-auto
-  GEORDI_DROID_AUTO   default: medium
-  GEORDI_AGENTS_FILE  default: ~/.agents/AGENTS.md
+  GEORDI_CODEX_ARGS    default: exec --full-auto
+  GEORDI_DROID_AUTO    default: medium
+  GEORDI_CURSOR_ARGS   default: -p --trust --output-format text
+  GEORDI_CLAUDE_ARGS   default: -p --dangerously-skip-permissions --output-format text
+  GEORDI_AGENTS_FILE   default: ~/.agents/AGENTS.md
   GEORDI_REQUIRE_AGENTS default: 1
-  GEORDI_PROJECT_ROOT default: current directory
+  GEORDI_PROJECT_ROOT  default: current directory
 EOF
 }
 
@@ -227,8 +229,26 @@ PY
       else
         droid exec --auto "${GEORDI_DROID_AUTO:-medium}" --cwd "$ROOT" "$(cat "$prompt_file")" 2>&1 | tee "$log_file"
       fi
+    elif [ "$mode" = "cursor" ]; then
+      # cursor-agent CLI: pass --model when provided, otherwise let the agent fall back to its default
+      if [ -n "$model" ]; then
+        # shellcheck disable=SC2086
+        cursor-agent ${GEORDI_CURSOR_ARGS:--p --trust --output-format text} --model "$model" "$(cat "$prompt_file")" 2>&1 | tee "$log_file"
+      else
+        # shellcheck disable=SC2086
+        cursor-agent ${GEORDI_CURSOR_ARGS:--p --trust --output-format text} "$(cat "$prompt_file")" 2>&1 | tee "$log_file"
+      fi
+    elif [ "$mode" = "claude" ]; then
+      # claude CLI: pass --model when provided, otherwise let Claude pick its default
+      if [ -n "$model" ]; then
+        # shellcheck disable=SC2086
+        claude ${GEORDI_CLAUDE_ARGS:--p --dangerously-skip-permissions --output-format text} --model "$model" "$(cat "$prompt_file")" 2>&1 | tee "$log_file"
+      else
+        # shellcheck disable=SC2086
+        claude ${GEORDI_CLAUDE_ARGS:--p --dangerously-skip-permissions --output-format text} "$(cat "$prompt_file")" 2>&1 | tee "$log_file"
+      fi
     else
-      echo "ERROR: unsupported mode: $mode" >&2; exit 1
+      echo "ERROR: unsupported mode: $mode (expected: codex|droid|cursor|claude)" >&2; exit 1
     fi
     accept=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["accept"])' "$mission")
     echo "verifying mission $id: $accept"

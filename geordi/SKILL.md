@@ -1,11 +1,11 @@
 ---
 name: geordi
-description: Use when turning a coding goal or PRD into bounded build missions, running those missions with Codex or Droid, verifying outcomes separately, and preserving receipts. Geordi merges the former build-pipeline discipline with the installable mission runner.
-version: 1.1.1
+description: Use when turning a coding goal or PRD into bounded build missions, running those missions with Codex, Droid, Cursor Agent, or Claude Code, verifying outcomes separately, and preserving receipts. Geordi merges the former build-pipeline discipline with the installable mission runner.
+version: 1.2.0
 author: SuperAda
 license: MIT
 metadata:
-  tags: [agent-workflow, geordi, codex, droid, build-pipeline, missions, verification]
+  tags: [agent-workflow, geordi, codex, droid, cursor, claude, build-pipeline, missions, verification]
 ---
 
 # Geordi
@@ -20,7 +20,7 @@ The machinery is intentionally plain: define a goal, add missions, run one runti
 - Breaks work into **missions**: bounded implementation units with acceptance checks.
 - Loads project context before building.
 - Prepends the shared global `AGENTS.md` context before every mission prompt.
-- Runs missions through **Codex** or **Droid**.
+- Runs missions through **Codex**, **Droid**, **Cursor Agent**, or **Claude Code**.
 - Keeps state in `.geordi/state/` so runs can be resumed or audited.
 - Separates implementation from verification.
 - Captures receipts: prompts, command logs, verification logs, and git status before/after.
@@ -37,7 +37,7 @@ bash /tmp/enterprise-crew-skills/geordi/install.sh
 Or one line, pinned to the public release:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/h-mascot/Enterprise-Crew-skills/v1.1.0/geordi/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/h-mascot/Enterprise-Crew-skills/v1.2.0/geordi/install.sh)
 ```
 
 The installer copies the bundle into `~/.geordi`, creates `~/.local/bin/geordi`, and prints a verification command.
@@ -151,6 +151,54 @@ Override with:
 ```bash
 GEORDI_DROID_AUTO=low geordi run --mode droid --model "custom:Your-Model-0"
 ```
+
+### Cursor mode
+
+Uses the `cursor-agent` CLI (headless print mode) from a Cursor install.
+
+Good for:
+
+- Repos where the Cursor editor / `cursor-agent` is the primary tool
+- Running headless missions through the Cursor agent tier
+- BYO `--model` routing (e.g. `gpt-5`, `sonnet`, or another supported model ID)
+
+Default command shape:
+
+```bash
+cursor-agent -p --trust --output-format text --model "$MODEL" "<mission prompt>"
+```
+
+Override flags with:
+
+```bash
+GEORDI_CURSOR_ARGS="-p --trust --output-format text" geordi run --mode cursor --model gpt-5
+```
+
+If `--model` is omitted, `cursor-agent` falls back to its configured default.
+
+### Claude mode
+
+Uses the `claude` CLI (Claude Code) in non-interactive print mode.
+
+Good for:
+
+- Repos with a `CLAUDE.md` / `.claude/` setup that already drives Claude Code
+- Sandboxed / headless runs where a self-contained agent is preferred
+- Last-resort fallback when Codex, Droid, and Cursor are rate-limited
+
+Default command shape:
+
+```bash
+claude -p --dangerously-skip-permissions --output-format text --model "$MODEL" "<mission prompt>"
+```
+
+Override flags with:
+
+```bash
+GEORDI_CLAUDE_ARGS="-p --dangerously-skip-permissions --output-format text" geordi run --mode claude --model sonnet
+```
+
+`--dangerously-skip-permissions` is for sandboxed/headless runs only; do not use it in interactive shells. If `--model` is omitted, the Claude CLI uses its configured default.
 
 ## Context-first build loop
 

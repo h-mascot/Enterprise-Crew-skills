@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_TARBALL_URL="${GEORDI_TARBALL_URL:-https://codeload.github.com/h-mascot/Enterprise-Crew-skills/tar.gz/refs/tags/v1.1.0}"
+REPO_TARBALL_URL="${GEORDI_TARBALL_URL:-https://codeload.github.com/h-mascot/Enterprise-Crew-skills/tar.gz/refs/tags/v1.2.0}"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="${GEORDI_HOME:-$HOME/.geordi}"
 BIN_DIR="${GEORDI_BIN_DIR:-$HOME/.local/bin}"

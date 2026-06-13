@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.2.0
+
+- Adds `cursor` mode that runs missions through the `cursor-agent` CLI (headless print mode).
+- Adds `claude` mode that runs missions through the `claude` CLI (Claude Code, non-interactive print mode).
+- Expands `geordi doctor`, `geordi init`, and `geordi run` to accept all four runtimes: `codex`, `droid`, `cursor`, `claude`.
+- Adds `GEORDI_CURSOR_ARGS` and `GEORDI_CLAUDE_ARGS` environment overrides for per-runtime flag customization.
+- Adds `examples/cursor-goal.md` and `examples/claude-goal.md` showing minimal goal/mission flow.
+- Refreshes `SKILL.md` with a Cursor mode section and a Claude mode section; metadata tags gain `cursor` and `claude`.
+- Bumps the pinned installer tarball tag to `v1.2.0`.
+
 ## 1.1.1
 
 - Requires global `AGENTS.md` context by default before Geordi mission prompts.
