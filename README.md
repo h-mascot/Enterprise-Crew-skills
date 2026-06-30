@@ -25,6 +25,8 @@ Open-source skills and scripts built by the [Enterprise Crew](https://github.com
 | [conference-prep](./conference-prep/) | End-to-end conference preparation: research, pitch-deck brief, scheduler, contact enrichment, session notes, and post-event follow-ups |
 | [github-sync](./github-sync/) | Repository initialization, authentication, PR governance, and cross-machine synchronization workflows |
 | [image-taste](./image-taste/) | Elite website image-to-code skill. Generates premium design images first, deeply analyzes them, then implements. Preferred in Codex for visual web tasks with separate readable images per section. |
+| [design-eval-loop](./design-eval-loop/) | Iterate an existing UI artifact to a verified 5/5 design score with per-view dead-item audits, rubric scoring, fixes, and fresh re-score receipts. |
+| [publish-skill](./publish-skill/) | Sanitize and publish agent skills to GitHub, SuperAda, and ClawHub with receipts. |
 
 ## About
 
