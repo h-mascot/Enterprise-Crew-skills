@@ -10,6 +10,7 @@ SCRIPT_DIR = ROOT / "scripts"
 # public session identifiers, counters, or identifiers — not credentials.
 NON_SECRET_NAMES = {
     "SESSION_KEY",
+    "CAMOFOX_SESSION_KEY",
     "TOTAL_TOKENS",
     "TOTAL_REQUESTS",
     "TOTAL_COST",
@@ -39,9 +40,42 @@ SECRET_ENV_FALLBACK = re.compile(
 PRIVATE_EMAIL_LITERAL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@(?:curacel\.ai|enterprisecrew\.ai)\b")
 REDACTED_HEADER_VALUE = re.compile(r'(?i)-H\s+["\'](?:x-api-key|authorization):\s*\*\*\*')
 
+# Personal identifiers that must not be hardcoded as literal Camofox user IDs
+# in any scraper. Operators override CAMOFOX_USER_ID at runtime; scripts default
+# to the generic "operator" placeholder only.
+PERSONAL_CAMOFOX_IDENTIFIERS = {"ada", "henry", "chisom", "mascot", "herald"}
+PERSONAL_USER_ASSIGNMENT = re.compile(
+    r'(?:USER_ID)\s*=\s*["\']?(?:'
+    + "|".join(re.escape(u) for u in PERSONAL_CAMOFOX_IDENTIFIERS)
+    + r')["\']?(?:\s|$)',
+    re.IGNORECASE,
+)
+PERSONAL_USER_IN_OUTPUT = re.compile(
+    r'userId\s*=\s*(?:'
+    + "|".join(re.escape(u) for u in PERSONAL_CAMOFOX_IDENTIFIERS)
+    + r')(?:[,\s"\']|$)',
+    re.IGNORECASE,
+)
+
 
 class PublicShellSecurityTests(unittest.TestCase):
     maxDiff = None
+
+    def test_openai_codex_scraper_supports_account_scoped_overrides(self):
+        script = (SCRIPT_DIR / "scrape-quota-openai-codex.sh").read_text()
+
+        self.assertIn('CAMOFOX_USER_ID="${CAMOFOX_USER_ID:-operator}"', script)
+        self.assertIn(
+            'CAMOFOX_SESSION_KEY="${CAMOFOX_SESSION_KEY:-openai-codex-quota}"',
+            script,
+        )
+        self.assertIn(
+            'CODEX_QUOTA_FILE="${CODEX_QUOTA_FILE:-$STATE_DIR/openai-codex-quota.json}"',
+            script,
+        )
+        self.assertIn('mkdir -p "$(dirname "$CODEX_QUOTA_FILE")"', script)
+        self.assertNotIn('SESSION_KEY="openai-codex-quota"', script)
+        self.assertNotIn('QUOTA_FILE="$STATE_DIR/openai-codex-quota.json"', script)
 
     def test_model_orchestrator_public_shell_scripts_do_not_embed_private_defaults(self):
         findings = []
@@ -67,6 +101,10 @@ class PublicShellSecurityTests(unittest.TestCase):
                     findings.append(f"{rel}:{line_number}:private-login-email")
                 if REDACTED_HEADER_VALUE.search(line):
                     findings.append(f"{rel}:{line_number}:redacted-runtime-header")
+                if PERSONAL_USER_ASSIGNMENT.search(line):
+                    findings.append(f"{rel}:{line_number}:personal-camofox-user-assignment")
+                if PERSONAL_USER_IN_OUTPUT.search(line):
+                    findings.append(f"{rel}:{line_number}:personal-camofox-user-in-output")
 
         self.assertEqual([], findings)
 

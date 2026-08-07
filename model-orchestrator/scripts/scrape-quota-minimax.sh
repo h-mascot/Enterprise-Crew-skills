@@ -8,7 +8,7 @@ set -uo pipefail
 
 CAMOFOX_URL="${CAMOFOX_URL:-http://localhost:9377}"
 API_KEY="${CAMOFOX_API_KEY:-}"
-USER_ID="ada"
+CAMOFOX_USER_ID="${CAMOFOX_USER_ID:-operator}"
 SESSION_KEY="minimax-quota"
 STATE_DIR="$(cd "$(dirname "$0")" && pwd)/../state"
 QUOTA_FILE="$STATE_DIR/minimax-quota.json"
@@ -45,14 +45,14 @@ if curl -sf --max-time 3 "$CAMOFOX_URL/health" -H "x-api-key: $API_KEY" >/dev/nu
   TAB_ID=$(curl -sf -X POST "$CAMOFOX_URL/tabs" \
     -H "Content-Type: application/json" \
     -H "x-api-key: $API_KEY" \
-    -d "{\"url\":\"https://platform.minimax.io/subscribe/coding-plan\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
+    -d "{\"url\":\"https://platform.minimax.io/subscribe/coding-plan\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
     | python3 -c "import json,sys; print(json.load(sys.stdin)['tabId'])" 2>/dev/null)
 
   if [[ -n "$TAB_ID" ]]; then
     sleep 5
-    SNAPSHOT=$(curl -s --max-time 15 "${CAMOFOX_URL}/tabs/${TAB_ID}/snapshot?userId=${USER_ID}&sessionKey=${SESSION_KEY}" \
+    SNAPSHOT=$(curl -s --max-time 15 "${CAMOFOX_URL}/tabs/${TAB_ID}/snapshot?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" \
       -H "x-api-key: $API_KEY" 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('snapshot',''))" 2>/dev/null)
-    curl -s -X DELETE "${CAMOFOX_URL}/tabs/${TAB_ID}?userId=${USER_ID}&sessionKey=${SESSION_KEY}" \
+    curl -s -X DELETE "${CAMOFOX_URL}/tabs/${TAB_ID}?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" \
       -H "x-api-key: $API_KEY" >/dev/null 2>&1
 
     if [[ -n "$SNAPSHOT" ]]; then
@@ -113,7 +113,7 @@ STATUS="$API_STATUS"
 
 # Write result
 python3 << PYEOF
-import json
+import json, os
 result = {
     "provider": "minimax",
     "api_status": "$API_STATUS",
@@ -121,7 +121,7 @@ result = {
     "plan_limit": "$PLAN_LIMIT",
     "dashboard_status": "$DASHBOARD_STATUS",
     "login": "${MINIMAX_EMAIL:-}",
-    "camofox_session": "userId=ada, sessionKey=minimax-quota",
+    "camofox_session": f"userId={os.environ.get(\"CAMOFOX_USER_ID\", \"operator\")}, sessionKey=minimax-quota",
     "dashboard_url": "https://platform.minimax.io/subscribe/coding-plan",
     "note": "MiniMax uses rolling prompt limits (no usage meter). API ping is primary health signal.",
     "status": "$STATUS",
