@@ -246,10 +246,16 @@ def load_config(config_path: Union[str, Path]) -> Tuple[List[Account], Policy, D
         ):
             raise ConfigError("quota_file contains path traversal")
 
+        email = str(acct_raw.get("email", "")).strip()
+        if not email:
+            raise ConfigError(
+                "account %r must have a non-empty email for identity verification"
+                % name
+            )
         accounts.append(
             Account(
                 name=name,
-                email=str(acct_raw.get("email", "")),
+                email=email,
                 priority=int(acct_raw.get("priority", 99)),
                 quota_source=str(acct_raw.get("quota_source", "manual")),
                 quota_file=quota_file,
@@ -455,7 +461,12 @@ def generate_plan(
         bindings = surface_index[sid]
         base_surface = bindings[0][1]
         surface_error = _surface_consistency_error(bindings)
-        current_name = explicit_current.get(sid) or declared_current.get(sid)
+        explicit_val = explicit_current.get(sid)
+        current_name = (
+            explicit_val
+            if explicit_val is not None
+            else declared_current.get(sid)
+        )
 
         if surface_error:
             actions.append(
@@ -1102,9 +1113,15 @@ current_identity="$(identity_status "$current_src" "$current_expected_email")" |
 if [[ "$current_identity" == "mismatch" ]]; then
   fail preflight "current_identity_mismatch"
 fi
+if [[ "$current_identity" == "absent" ]]; then
+  fail preflight "current_identity_absent"
+fi
 target_identity="$(identity_status "$target_src" "$target_expected_email")" || fail preflight "target_identity_check_failed"
 if [[ "$target_identity" == "mismatch" ]]; then
   fail preflight "target_identity_mismatch"
+fi
+if [[ "$target_identity" == "absent" ]]; then
+  fail preflight "target_identity_absent"
 fi
 
 backup="${active_dest}.fleet-drain-backup.$(date -u +%Y%m%dT%H%M%SZ).$$"
@@ -1155,6 +1172,9 @@ active_identity="$(identity_status "$active_dest" "$target_expected_email")" || 
 }
 if [[ "$active_identity" == "mismatch" ]]; then
   fail_after_mutation verify "active_identity_mismatch"
+fi
+if [[ "$active_identity" == "absent" ]]; then
+  fail_after_mutation verify "active_identity_absent"
 fi
 
 if ! "$codex_cli" login status >/dev/null 2>&1; then

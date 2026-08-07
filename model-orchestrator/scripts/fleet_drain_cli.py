@@ -21,17 +21,26 @@ from fleet_drain import (  # noqa: E402
 
 
 def parse_current_args(current_list):
-    """Parse --current surface=account pairs."""
+    """Parse --current surface=account pairs.
+
+    Empty surface names or empty account values are rejected as malformed
+    so that a typo like ``--current enterprise:geordi=`` cannot silently
+    fall back to the config-declared assignment.
+    """
     result = {}
     for item in current_list:
         if "=" not in item:
-            print(
-                "WARNING: ignoring malformed --current %r (expected surface=account)" % item,
-                file=sys.stderr,
+            raise ValueError(
+                "malformed --current %r (expected surface=account)" % item
             )
-            continue
         surface, account = item.split("=", 1)
-        result[surface.strip()] = account.strip()
+        surface = surface.strip()
+        account = account.strip()
+        if not surface or not account:
+            raise ValueError(
+                "malformed --current %r (empty surface or account)" % item
+            )
+        result[surface] = account
     return result
 
 
@@ -166,7 +175,11 @@ def main(argv=None):
         if command == "plan":
             fd = FleetDrain(config_path)
             fd.load()
-            current = parse_current_args(args.current)
+            try:
+                current = parse_current_args(args.current)
+            except ValueError as exc:
+                print("ERROR: %s" % exc, file=sys.stderr)
+                return 2
             artifact = fd.plan_artifact(current)
             if args.out:
                 write_plan_artifact(artifact, args.out)

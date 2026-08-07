@@ -33,12 +33,6 @@ from fleet_drain import (  # noqa: E402
 )
 
 
-def _strip_email_fields(config_text):
-    return "\n".join(
-        line for line in config_text.splitlines() if not line.lstrip().startswith("email:")
-    )
-
-
 class TestConfigLoading:
     def test_loads_accounts_surfaces_policy_and_current(self, config_file):
         accounts, policy, ssh = load_config(config_file)
@@ -286,12 +280,10 @@ class TestPlanGeneration:
         assert {a.proposed_account for a in actions} == {"herald"}
         assert all(not a.is_noop for a in actions)
 
-    def test_same_auth_source_replacement_blocks_with_identity_emails_absent(
-        self, tmp_path, sample_config_yaml
-    ):
-        cfg = tmp_path / "same-source-no-identity.yaml"
+    def test_same_auth_source_replacement_blocks(self, tmp_path, sample_config_yaml):
+        cfg = tmp_path / "same-source.yaml"
         cfg.write_text(
-            _strip_email_fields(sample_config_yaml).replace(
+            sample_config_yaml.replace(
                 "~/.codex/accounts/herald/auth.json",
                 "~/.codex/accounts/luna/auth.json",
             )
@@ -873,3 +865,205 @@ class TestStatus:
         assert "luna" in status
         assert "herald" in status
         assert "enterprise:geordi" in status
+
+
+class TestIdentityFailClosed:
+    """Regression tests for identity-verification fail-open paths.
+
+    These test that accounts with empty emails, auth JSON without identity
+    keys, and malformed --current args all fail closed instead of silently
+    proceeding.
+    """
+
+    def test_config_rejects_empty_email(self, tmp_path, sample_config_yaml):
+        cfg = tmp_path / "no-email.yaml"
+        cfg.write_text(
+            sample_config_yaml.replace(
+                "email: luna@example.invalid", "email: ''"
+            )
+        )
+        with pytest.raises(ConfigError, match="non-empty email"):
+            load_config(cfg)
+
+    def test_config_rejects_missing_email(self, tmp_path, sample_config_yaml):
+        cfg = tmp_path / "missing-email.yaml"
+        lines = [
+            line
+            for line in sample_config_yaml.splitlines()
+            if line.strip() != "email: herald@example.invalid"
+        ]
+        cfg.write_text("\n".join(lines))
+        with pytest.raises(ConfigError, match="non-empty email"):
+            load_config(cfg)
+
+    def test_generate_plan_explicit_empty_does_not_fallthrough(
+        self, tmp_path, sample_config_yaml
+    ):
+        """Empty string in explicit_current should not fall through to
+        declared_current via ``or`` semantics."""
+        cfg = tmp_path / "test.yaml"
+        cfg.write_text(sample_config_yaml)
+        accounts, policy, ssh = load_config(cfg)
+        set_manual_quota(
+            accounts,
+            {
+                "luna": {
+                    "five_hour_remaining_pct": 2,
+                    "weekly_remaining_pct": 5,
+                    "status": "exhausted",
+                },
+                "herald": {
+                    "five_hour_remaining_pct": 70,
+                    "weekly_remaining_pct": 85,
+                    "status": "healthy",
+                },
+            },
+        )
+        actions = generate_plan(accounts, policy, {"enterprise:geordi": ""})
+        matching = [a for a in actions if a.surface_id == "enterprise:geordi"]
+        assert len(matching) == 1
+        action = matching[0]
+        assert action.is_blocked
+
+    def test_remote_script_rejects_absent_identity_in_target_auth(self, tmp_path):
+        """Auth JSON with no email/login/username keys must fail, not pass."""
+        home = tmp_path / "home"
+        codex_dir = home / ".codex"
+        luna_dir = codex_dir / "accounts" / "luna"
+        herald_dir = codex_dir / "accounts" / "herald"
+        bin_dir = home / ".local" / "bin"
+        luna_dir.mkdir(parents=True)
+        herald_dir.mkdir(parents=True)
+        bin_dir.mkdir(parents=True)
+
+        current_auth = luna_dir / "auth.json"
+        target_auth = herald_dir / "auth.json"
+        active_auth = codex_dir / "auth.json"
+        codex_cli = bin_dir / "codex"
+
+        current_bytes = json.dumps(
+            {"email": "luna@example.invalid"}, sort_keys=True
+        ).encode("utf-8")
+        target_bytes = json.dumps(
+            {"some_other_key": "value"}, sort_keys=True
+        ).encode("utf-8")
+
+        current_auth.write_bytes(current_bytes)
+        target_auth.write_bytes(target_bytes)
+        active_auth.write_bytes(current_bytes)
+        codex_cli.write_text('#!/bin/sh\nexit 0\n')
+
+        for path in (current_auth, target_auth, active_auth):
+            path.chmod(0o600)
+        codex_cli.chmod(0o700)
+
+        env = dict(os.environ)
+        env["HOME"] = str(home)
+        result = subprocess.run(
+            [
+                "/bin/bash",
+                "-s",
+                "--",
+                "~/.codex/accounts/luna/auth.json",
+                "~/.codex/accounts/herald/auth.json",
+                "~/.codex/auth.json",
+                "luna@example.invalid",
+                "herald@example.invalid",
+                "~/.local/bin/codex",
+            ],
+            input=REMOTE_SWITCH_SCRIPT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=env,
+        )
+
+        assert result.returncode == 1, result.stdout + result.stderr
+        payload = json.loads(result.stdout.splitlines()[-1])
+        assert payload["ok"] is False
+        assert payload["stage"] == "preflight"
+        assert "absent" in payload["error"]
+
+    def test_remote_script_rejects_absent_identity_in_current_auth(self, tmp_path):
+        """Current auth JSON with no identity keys must fail preflight."""
+        home = tmp_path / "home"
+        codex_dir = home / ".codex"
+        luna_dir = codex_dir / "accounts" / "luna"
+        herald_dir = codex_dir / "accounts" / "herald"
+        bin_dir = home / ".local" / "bin"
+        luna_dir.mkdir(parents=True)
+        herald_dir.mkdir(parents=True)
+        bin_dir.mkdir(parents=True)
+
+        current_auth = luna_dir / "auth.json"
+        target_auth = herald_dir / "auth.json"
+        active_auth = codex_dir / "auth.json"
+        codex_cli = bin_dir / "codex"
+
+        current_bytes = json.dumps(
+            {"random_key": "no-identity-here"}, sort_keys=True
+        ).encode("utf-8")
+        target_bytes = json.dumps(
+            {"email": "herald@example.invalid"}, sort_keys=True
+        ).encode("utf-8")
+
+        current_auth.write_bytes(current_bytes)
+        target_auth.write_bytes(target_bytes)
+        active_auth.write_bytes(current_bytes)
+        codex_cli.write_text('#!/bin/sh\nexit 0\n')
+
+        for path in (current_auth, target_auth, active_auth):
+            path.chmod(0o600)
+        codex_cli.chmod(0o700)
+
+        env = dict(os.environ)
+        env["HOME"] = str(home)
+        result = subprocess.run(
+            [
+                "/bin/bash",
+                "-s",
+                "--",
+                "~/.codex/accounts/luna/auth.json",
+                "~/.codex/accounts/herald/auth.json",
+                "~/.codex/auth.json",
+                "luna@example.invalid",
+                "herald@example.invalid",
+                "~/.local/bin/codex",
+            ],
+            input=REMOTE_SWITCH_SCRIPT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=env,
+        )
+
+        assert result.returncode == 1, result.stdout + result.stderr
+        payload = json.loads(result.stdout.splitlines()[-1])
+        assert payload["ok"] is False
+        assert payload["stage"] == "preflight"
+        assert "absent" in payload["error"]
+
+
+class TestCliCurrentArgsValidation:
+    """Regression tests for parse_current_args fail-open."""
+
+    def test_rejects_empty_account_value(self):
+        sys.path.insert(0, str(SCRIPT_DIR))
+        from fleet_drain_cli import parse_current_args
+
+        with pytest.raises(ValueError, match="empty surface or account"):
+            parse_current_args(["enterprise:geordi="])
+
+    def test_rejects_empty_surface(self):
+        sys.path.insert(0, str(SCRIPT_DIR))
+        from fleet_drain_cli import parse_current_args
+
+        with pytest.raises(ValueError, match="empty surface or account"):
+            parse_current_args(["=luna"])
+
+    def test_rejects_no_equals_sign(self):
+        sys.path.insert(0, str(SCRIPT_DIR))
+        from fleet_drain_cli import parse_current_args
+
+        with pytest.raises(ValueError, match="expected surface=account"):
+            parse_current_args(["just_a_string"])
