@@ -1,141 +1,82 @@
-# Plan: Fleet-wide Codex Account Drain in model-orchestrator
+# Codex fleet account drain and agent fallback
 
-**Created:** 2026-08-07
-**MC Task:** #1250
-**Status:** Ready for Review
+Date: 2026-08-07
+Branch: `feature/codex-fleet-drain`
+Owner: Book supervising Geordi/Codex
 
 ## Goal
 
-Extend the public `model-orchestrator` skill with account-aware Codex quota policy so the orchestrator can distribute load across multiple Codex accounts (e.g. Luna, Herald) on multiple agent surfaces (Geordi on Enterprise, Geordi on MascotM3), drain accounts in priority order, and safely plan/apply switches without exposing secrets.
+Extend `model-orchestrator` from cron-only model balancing into a safe, account-aware fleet controller. When a Codex account reaches a configurable reserve, stop assigning new work to that account across every configured agent, including both real Geordi host surfaces. Prefer another healthy Codex account; otherwise route configured agents to their non-Codex fallback. Support arbitrary additional agents through data, not hardcoded names.
 
-## Background
+## Safety contract
 
-The existing model-orchestrator (commit `6f6a1a4`) is a shell-script skill with:
-- Provider health checks (6 providers)
-- Quota scraping via Camofox browser
-- Tier-based distribution (T1/T2/T3)
-- Crisis mode
+- Planning is the default. No command runs without explicit `apply` mode.
+- Never terminate an in-flight Codex worker.
+- Switch host-local `auth.json` only through `codex-keyring`; never copy tokens between hosts.
+- Disable keyring auto-switch before a coordinated manual switch so it cannot immediately revert.
+- Treat the five-hour and weekly windows independently; the lower known remaining percentage is the account floor.
+- Drain at `<= 20%`; recover at `>= 35%` by default. Persist state for hysteresis.
+- Missing, unknown, stale, or inexact active quota blocks mutation by default; unknown/stale aliases are never eligible alternates.
+- Quota freshness is explicit. Alias-level quota observation timestamps are required; generic `updatedAt` and switch timestamps are not quota observations.
+- Alternates require fresh known quota, `confidence=exact`, `manualOnly=false`, and a policy-allowed health value.
+- Agent admission/drain, fallback, and restore commands are declarative argv arrays. No implicit broad process kills.
+- Agent transports may differ from their quota/keyring host transport.
+- Apply is bounded by action timeouts and an exclusive non-blocking file lock.
+- Partial mutation persists `partial_failure` state; future plans block until operator reconciliation.
+- Audit actions without persisting credentials or raw auth payloads.
+- Geordi is represented by its real Enterprise and MascotM3 Codex surfaces, not as a standalone gateway persona.
 
-It has no concept of multiple accounts under one provider, no agent-target configuration, no safe plan/apply separation, no tests, and inline secrets in some scrape scripts.
+## Deliverables
 
-## Architecture
-
-### New files
-
-| File | Purpose |
-|------|---------|
-| `model-orchestrator/scripts/fleet_drain.py` | Core Python module: account config, policy, plan, apply |
-| `model-orchestrator/scripts/fleet_drain_cli.py` | CLI wrapper: `fleet_drain.py plan\|apply\|status` |
-| `model-orchestrator/config/accounts.example.yaml` | Example account config (no secrets) |
-| `model-orchestrator/tests/test_fleet_drain.py` | Unit tests for policy, plan, config parsing |
-| `model-orchestrator/tests/test_fleet_drain_cli.py` | CLI integration tests |
-| `model-orchestrator/tests/test_security_scan.py` | Regression scan for tracked secret patterns and known leaked literal hashes |
-| `model-orchestrator/tests/conftest.py` | Pytest fixtures |
-
-### Account config schema (`config/accounts.yaml`)
-
-```yaml
-accounts:
-  - name: luna
-    email: luna@example.invalid
-    priority: 1           # lower = drain first
-    quota_source: camofox # or "api" or "manual"
-    quota_file: state/openai-codex-quota-luna.json
-    surfaces:
-      - host: enterprise   # 100.104.229.62
-        agent: geordi
-        ssh_target: enterprise@100.104.229.62
-        codex_cli_path: ~/.local/bin/codex
-        active_auth_path: ~/.codex/auth.json
-        auth_source_path: ~/.codex/accounts/luna/auth.json
-      - host: mascotm3     # 100.86.150.96
-        agent: geordi
-        ssh_target: henrymascot@100.86.150.96
-        codex_cli_path: ~/.local/bin/codex
-        active_auth_path: ~/.codex/auth.json
-        auth_source_path: ~/.codex/accounts/luna/auth.json
-  - name: herald
-    email: herald@example.invalid
-    priority: 2
-    quota_source: camofox
-    quota_file: state/openai-codex-quota-herald.json
-    surfaces:
-      - host: enterprise
-        agent: geordi
-        ssh_target: enterprise@100.104.229.62
-        codex_cli_path: ~/.local/bin/codex
-        active_auth_path: ~/.codex/auth.json
-        auth_source_path: ~/.codex/accounts/herald/auth.json
-      - host: mascotm3
-        agent: geordi
-        ssh_target: henrymascot@100.86.150.96
-        codex_cli_path: ~/.local/bin/codex
-        active_auth_path: ~/.codex/auth.json
-        auth_source_path: ~/.codex/accounts/herald/auth.json
-
-current_assignments:
-  enterprise:geordi: luna
-  mascotm3:geordi: luna
-
-policy:
-  min_remaining_pct: 10      # switch trigger
-  target_remaining_pct: 50   # replacement eligibility / hysteresis
-  drain_order: priority      # priority | most_remaining | round_robin
-  dry_run_default: true      # plan is always safe; apply requires --confirm
-
-```
-
-### Policy logic (fleet_drain.py)
-
-1. Load account config
-2. Collect quota for each account (from scrape scripts or manual input)
-3. Rank accounts by drain_order
-4. For each unique surface, require an explicit current assignment from config or `--current`:
-   - KEEP: current account is usable and at/above `min_remaining_pct`
-   - SWITCH: current account is below `min_remaining_pct` or unusable, and a replacement is at/above `target_remaining_pct`
-   - BLOCKED: current assignment is unknown/ambiguous/unsafe, or no eligible replacement exists
-5. Emit a JSON artifact with schema version, config digest, action digest, quota snapshot, summary, and one action per unique surface
-6. Apply consumes only that exact artifact, defaults to dry-run, and requires `--confirm` for SSH mutation
-
-### CLI
-
-```
-fleet_drain.py status                         # show accounts, quotas, surfaces
-fleet_drain.py plan --out state/plan.json     # emit review artifact, no mutations
-fleet_drain.py apply --plan state/plan.json   # dry-run reviewed artifact
-fleet_drain.py apply --plan state/plan.json --confirm
-```
-
-## Steps
-
-- [x] 1. Create this plan
-- [x] 2. Build `fleet_drain.py` core module (config loader, policy, plan generator, artifact validation, fail-closed SSH switch contract)
-- [x] 3. Build `fleet_drain_cli.py` CLI wrapper
-- [x] 4. Create example config `config/accounts.example.yaml`
-- [x] 5. Write tests `tests/test_fleet_drain.py`
-- [x] 6. Security cleanup: sanitize inline secrets in scrape scripts
-- [x] 7. Update SKILL.md and README.md
-- [x] 8. Run tests, shell syntax checks, security regression scan, and safe plan/apply verification
-- [x] 9. Commit and push the repair to PR #2
-- [x] 10. Submit MC #1250 for review with PR, test, and live-target receipts
-
-## Security
-
-- No secrets in config files, code, or tests
-- Config references secret paths, never inline values
-- Existing scrape scripts sanitized: remove inline credentials and personal account/org identifiers, use env vars/placeholders
-- `.gitignore` for `state/` and `config/accounts.yaml` (only `.example.yaml` tracked)
-- Confirmed apply regenerates expected actions under the current policy, requires pre-trusted SSH host keys, and verifies `codex login status` after atomic auth installation.
-- Successful and rollback account switches are tested with temp auth artifacts. A live Enterprise/MascotM3 preflight was also run against missing protected sources and proved both active auth files stayed unchanged; no live account switch was performed.
-- Regression scan covers tracked `model-orchestrator` text for obvious token/password patterns and known leaked literal hashes without printing the known literals.
+- [x] Pure Python policy/controller using only the standard library.
+- [x] Generic JSON config schema/example for hosts and arbitrary agents.
+- [x] Local and SSH host adapters for `codex-keyring status --json`, `auto off`, and `switch`.
+- [x] Deterministic action plan for switch, fallback, recovery, and no-op paths.
+- [x] Explicit apply mode with ordered, fail-closed execution and audit/state receipts.
+- [x] Direct `scripts/fleet.py` entrypoints for plan/apply/status; no dependency on the legacy cron orchestrator.
+- [x] Unit tests written before implementation for thresholds, hysteresis, alternate-account choice, multi-agent coverage, SSH command quoting, dry-run, and fail-closed apply.
+- [x] Parent-review hardening tests written before correction for actual keyring list shape, explicit freshness, metadata, cross-host agents, admission ordering, partial failure, bounded execution, locking, SSH redaction, config validation, and switch cooldown.
+- [x] Final parent-review regression tests written before correction for CLI/read-status freshness, deployable sensor behavior, transaction-wide locking, fallback alternate recovery, first-action partial failure, invalid quota percentages, schema validation, receipt naming, and example topology.
+- [x] Optional `status_command` argv contract plus shipped standard-library `scripts/codex-keyring-status.py` sensor for safe per-alias quota metadata enrichment.
+- [x] Documentation covering Book, Ada, `geordi-enterprise`, Spock, Scotty, Zora, Midas, EntityBuilder opt-in, and MascotM3 without committing private host details or credentials.
+- [x] Keep credential-bearing legacy scripts out of this feature diff; patch-level scanning covers both added and deleted lines.
 
 ## Verification
 
-- `python3 -m pytest -q` — 63 passed
-- `bash -n model-orchestrator/scripts/*.sh` — 11 scripts passed
-- `python3 -m py_compile ...` and `git diff --cached --check` — passed
-- Live fail-closed apply — two real Geordi targets returned `current_source_missing`, exit 4, with both active auth files unchanged
+- [x] Failing tests captured before implementation at `/tmp/model-orchestrator-hardening-red.log`.
+- [x] Final correction failing tests captured before implementation at `/tmp/model-orchestrator-final-red.log`.
+- [x] `python3 -m unittest discover -s model-orchestrator/tests -v`
+- [x] No changed shell entrypoint. The fleet CLI is Python-only and intentionally excludes the legacy cron orchestrator from this diff.
+- [x] `python3 -m py_compile model-orchestrator/fleet_controller.py model-orchestrator/scripts/fleet.py model-orchestrator/scripts/codex-keyring-status.py`
+- [x] JSON validation plus `fleet_controller.validate_config()` over `model-orchestrator/config/fleet.example.json`
+- [x] CLI and sensor fixture smokes: plan low-account switch, plan no-alternate fallback, lock contention, receipt collision resistance, apply through harmless fixture commands, recovery plan, and safe sensor enrichment.
+- [x] Secret/private-default scan across the branch diff.
+- [x] Generated `__pycache__` and `output` directories removed.
+- [x] Codex autoreview over the final staged implementation; all actionable controller findings fixed. The unrelated legacy cron-script defect remains outside this diff.
+- [x] Final tests rerun before handoff.
+- [ ] Feature branch pushed and PR opened. Deferred by current instruction: do not commit, push, or open a PR.
+
+## Live rollout boundary
+
+This branch ships the controller and examples. Live fleet mutation is a separate gated step. Before any live apply:
+
+1. Install/register `codex-keyring` independently on each real Codex host.
+2. Add private host and per-agent route commands outside the public repo.
+3. Run `python3 scripts/fleet.py plan --config /private/path/fleet.json` and inspect the receipt.
+4. Prove current processes and active jobs; no process kill is permitted.
+5. Apply to one canary host, verify account identity and next-request routing, then expand.
+
+## Progress log
+
+- 2026-08-07: Public orchestrator confirmed cron-only before this feature branch.
+- 2026-08-07: Live rollout evidence and account telemetry are intentionally excluded from this public plan; rollout must use private operator receipts outside the repo.
+- 2026-08-07: Added the standard-library fleet controller, direct CLI, placeholder fleet config, TDD tests, and docs. Kept the legacy cron orchestrator out of the patch so provider credentials and unrelated baseline defects are not surfaced.
+- 2026-08-07: Verification passed with 53 unit tests, deterministic fixture smokes, Python compilation, JSON example validation, and an added/deleted-line private-secret scan. Commit/push/PR intentionally left for Book.
+- 2026-08-07: Parent-review correction reproduced the actual `codex-keyring status --json` list shape without quota timestamps as a red test, then hardened status freshness, active-block decisions, alternate eligibility, per-agent transports, fallback/recovery ordering, partial-failure state, timeouts, file locking, nested SSH redaction, config validation, switch cooldown, and the example status sensor contract. Red receipt: `/tmp/model-orchestrator-hardening-red.log`.
+- 2026-08-07: Final correction red run captured at `/tmp/model-orchestrator-final-red.log`, then fixed CLI/read-status freshness, added the deployable safe status sensor, widened apply locking to cover state/status/plan/execution, added fallback alternate recovery, persisted first-action partial failures, rejected out-of-range quota percentages, corrected the example topology, added collision-resistant receipt names, validated `schema_version`, reran all gates, and removed generated cache/output.
+- 2026-08-07: Hardening added regressions for non-finite quota/policy numbers, alias-only freshness, future observations, no-enabled-agent topology, MascotM3 fallback actions, CLI lock-proof receipt persistence, string boolean parsing, and `{skill_dir}` status-command expansion from a different cwd.
+- 2026-08-07: Final verification normalization rejects missing or ambiguous keyring state fields instead of inferring success. Focused regression and full 53-test suite pass.
 
 ## Resume instructions
 
-If context compacts, re-read this file. The code lives in `model-orchestrator/scripts/fleet_drain.py` and tests in `model-orchestrator/tests/`. Run `python3 -m pytest model-orchestrator/tests/ -v` to verify.
+Read this file, inspect `git status --short`, run the focused unit suite, and continue from the first unchecked deliverable. Do not touch a sibling canonical checkout; it may contain unrelated uncommitted work. Work only in the checkout containing this plan.

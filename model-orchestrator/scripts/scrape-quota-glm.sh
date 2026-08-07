@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # scrape-quota-glm.sh — Scrape GLM/Z.ai quota from dashboard via Camofox browser
 # Outputs JSON with 5h quota %, web search quota %, total tokens, plan info
-# Requires: Camofox running on localhost:9377, authenticated session (operator/glm-quota)
+# Requires: Camofox running on localhost:9377, authenticated session (ada/glm-quota)
 set -uo pipefail
 
 CAMOFOX_URL="${CAMOFOX_URL:-http://localhost:9377}"
-API_KEY="${CAMOFOX_API_KEY:-$(cat ~/clawd/secrets/camofox.env 2>/dev/null | grep CAMOFOX_API_KEY | cut -d= -f2)}"
-CAMOFOX_USER_ID="${CAMOFOX_USER_ID:-operator}"
+API_KEY="${CAMOFOX_API_KEY:-}"
+USER_ID="ada"
 SESSION_KEY="glm-quota"
 STATE_DIR="$(cd "$(dirname "$0")" && pwd)/../state"
 QUOTA_FILE="$STATE_DIR/glm-quota.json"
 TMP_SNAPSHOT="/tmp/glm-snapshot-$$.txt"
 NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+GOOGLE_EMAIL="${GOOGLE_EMAIL:-}"
 
 cleanup() { rm -f "$TMP_SNAPSHOT"; }
 trap cleanup EXIT
@@ -28,27 +29,33 @@ curl -sf --max-time 5 "$CAMOFOX_URL/health" -H "x-api-key: $API_KEY" >/dev/null 
 TAB_ID=$(curl -sf -X POST "$CAMOFOX_URL/tabs" \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
-  -d "{\"url\":\"https://z.ai/manage-apikey/subscription?tab=usage\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
+  -d "{\"url\":\"https://z.ai/manage-apikey/subscription?tab=usage\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['tabId'])" 2>/dev/null) || err "tab_create_failed"
 
 sleep 6
 
 # Get snapshot
-SNAPSHOT=$(curl -s --max-time 15 "${CAMOFOX_URL}/tabs/${TAB_ID}/snapshot?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" \
+SNAPSHOT=$(curl -s --max-time 15 "${CAMOFOX_URL}/tabs/${TAB_ID}/snapshot?userId=${USER_ID}&sessionKey=${SESSION_KEY}" \
   -H "x-api-key: $API_KEY" 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('snapshot',''))" 2>/dev/null)
 
 # Close tab
-curl -s -X DELETE "${CAMOFOX_URL}/tabs/${TAB_ID}?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" \
+curl -s -X DELETE "${CAMOFOX_URL}/tabs/${TAB_ID}?userId=${USER_ID}&sessionKey=${SESSION_KEY}" \
   -H "x-api-key: $API_KEY" >/dev/null 2>&1
 
 [[ -n "$SNAPSHOT" ]] || err "snapshot_empty"
 echo "$SNAPSHOT" > "$TMP_SNAPSHOT"
 
 # Parse quota from snapshot
-python3 - "$TMP_SNAPSHOT" "$NOW_ISO" "$QUOTA_FILE" "$CAMOFOX_USER_ID" "$SESSION_KEY" << 'PYEOF'
+python3 << 'PYEOF'
 import json, sys, re, os
 
-tmp_file, now_iso, quota_file, camofox_user_id, session_key = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+now_iso = os.environ.get("NOW_ISO", "")
+quota_file = os.environ.get("QUOTA_FILE", "")
+tmp_file = os.environ.get("TMP_SNAPSHOT", "")
+
+if not now_iso:
+    from datetime import datetime, timezone
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 with open(tmp_file) as f:
     snapshot = f.read()
@@ -112,8 +119,8 @@ result = {
     "total_tokens_7d": total_tokens,
     "last_updated": last_updated,
     "auto_renew": auto_renew,
-    "login": f"{os.environ.get('GOOGLE_LOGIN_EMAIL', 'operator@example.com')} (Google OAuth)",
-    "camofox_session": f"userId={camofox_user_id}, sessionKey={session_key}",
+    "login": "${GOOGLE_EMAIL:-} (Google OAuth)",
+    "camofox_session": "userId=ada, sessionKey=glm-quota",
     "dashboard_url": "https://z.ai/manage-apikey/subscription",
     "status": status,
     "checked_at": now_iso

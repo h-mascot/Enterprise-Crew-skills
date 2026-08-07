@@ -29,12 +29,13 @@ The orchestrator then routes each tier to the cheapest healthy provider:
 - **Crisis mode** — when 2+ providers are down, preserves critical crons and pauses everything else
 - **Audit trail** — logs every model switch with reason and timestamp
 - **Discord reporting** — posts fleet health summary to a configured channel
+- **Codex fleet drain** — plans or applies account-aware admission drains across configured hosts and agents
 
 ## Setup
 
 1. Copy this skill into your OpenClaw skills directory:
    ```bash
-   cp -r model-orchestrator ~/.openclaw/skills/
+   cp -r model-orchestrator "$OPENCLAW_SKILLS_DIR/"
    ```
 
 2. Set environment variables:
@@ -43,9 +44,14 @@ The orchestrator then routes each tier to the cheapest healthy provider:
    export OPENCLAW_GATEWAY_TOKEN="your-gateway-token"
    ```
 
-3. Configure provider API keys via OpenClaw config or individual secret files.
+3. Configure provider API keys through environment or private runtime config. Public files in this skill must not contain API keys, OAuth emails, passwords, host addresses, or tokens.
 
 4. Edit `scripts/orchestrate.sh` to add your cron-to-tier mappings in the tier assignment section.
+
+5. For Codex fleet drain, copy `config/fleet.example.json` to a private path, replace placeholder hostnames and commands, and point the CLI at it:
+   ```bash
+   export MODEL_ORCHESTRATOR_FLEET_CONFIG="/private/path/fleet.json"
+   ```
 
 ## Usage
 
@@ -61,7 +67,76 @@ The orchestrator then routes each tier to the cheapest healthy provider:
 
 # Show current status
 ./scripts/orchestrate.sh status
+
+# Plan Codex account drain actions only
+python3 scripts/fleet.py plan --config /private/path/fleet.json
+
+# Apply a freshly planned Codex fleet action list (explicit mutation acknowledgement required)
+python3 scripts/fleet.py apply --apply --config /private/path/fleet.json
+
+# Show parsed codex-keyring account status and persisted hysteresis state
+python3 scripts/fleet.py status --config /private/path/fleet.json
 ```
+
+Planning is the default. `fleet.py apply` refuses to run mutating commands unless the CLI receives `--apply`. The fleet CLI is intentionally separate from the legacy cron-oriented `orchestrate.sh`.
+
+## Codex Fleet Drain
+
+The fleet controller is a pure-Python, standard-library policy engine in `fleet_controller.py` with a thin CLI at `scripts/fleet.py`. It reads `codex-keyring status --json`, including top-level `state` plus `aliases`, and treats the lower known value of `limit5hRemainingPercent` and `limitWeekRemainingPercent` as each account's quota floor. Quota freshness is explicit: each alias needs a quota observation timestamp such as `quotaObservedAt`, `quota_observed_at`, or alias-level `checkedAt`. Generic top-level `updatedAt` values are not treated as quota observations.
+
+Default policy:
+
+- Drain when the active account is at or below 20% remaining.
+- Recover fallback-routed hosts when the active account is at or above 35%, or by switching to another eligible Codex account and then restoring agent routes.
+- Persist host state for hysteresis, so a host does not flap between fallback and Codex.
+- Block mutation when the active alias is missing, quota is unknown, quota is stale, or quota confidence is not `exact`.
+- Select alternates only when their quota is known, fresh, `confidence=exact`, `manualOnly=false`, and their health is in `alternate_health_allowlist` (default: `ready`, `healthy`, `ok`).
+- Enforce a 600 second switch cooldown by default; during cooldown the controller waits instead of switching or fallback-routing again unless the active account is exhausted at `0%`.
+- Bound every action with `default_action_timeout_seconds` or per-host/per-agent timeout overrides.
+
+Switch behavior:
+
+- Above the drain threshold, no action is planned.
+- Low active account with an eligible alternate: close admission for every configured agent, disable `codex-keyring` auto-switch, switch the host account, then reopen admission.
+- Low active account with no eligible alternate: close admission, run every agent's declarative non-Codex fallback command, then reopen admission so fallback work can continue.
+- Previously fallback-routed host with recovered active Codex quota: close admission, run declarative restore commands, then reopen admission.
+- Previously fallback-routed host with low active quota but an eligible alternate: close admission, disable `codex-keyring` auto-switch, switch and verify the host account, run declarative restore commands, then reopen admission.
+
+Active workers are not killed or restarted. Admission closes only stop new work from landing on the drained account; in-flight workers finish naturally.
+
+Config is generic JSON. The example demonstrates one shared Enterprise quota source with Book, Ada, and `geordi-enterprise` as enabled agents under that quota pool; Spock, Scotty, Zora, Midas, and EntityBuilder are present but disabled until private config confirms they consume that same Codex quota pool and have validated routing. MascotM3 remains a separate keyring host with its own enabled `geordi-mascotm3` agent. Every host must have at least one enabled agent so low-account plans cannot persist fallback state without route actions. Disabled arbitrary agents may remain as data until private rollout supplies commands. Add future agents by adding objects under `hosts[].agents[]`; do not add code branches for agent names.
+
+Host transports are `local` and `ssh`. Agents can override their transport independently from the quota/keyring host: keyring and status commands use `hosts[].transport`, while agent admission/route commands use `agents[].transport` when present. Commands are arrays of arguments, placeholder expansion is limited to documented fields such as `{host_id}`, `{agent_id}`, `{active_alias}`, and `{target_alias}`. Status commands also support `{skill_dir}`, which expands to this skill's installed directory so copied configs can still invoke the shipped sensor. The controller never uses `shell=True`. For SSH hosts, remote argv is shell-quoted with `shlex.join`.
+
+`agentctl` in the example is an adapter contract, not a shipped binary. Private deployments must provide an argv-compatible tool that closes admission, opens admission, and switches the agent route without killing active workers.
+
+Private configs may set `hosts[].status_command` to an argv array that returns codex-keyring-compatible JSON. The shipped standard-library sensor `scripts/codex-keyring-status.py` runs configured `codex-keyring status --json`, reads safe per-alias quota metadata from `~/.codex-keyring/stats` by default, and emits only sanitized `state` and `aliases` data:
+
+```json
+"status_command": ["python3", "{skill_dir}/scripts/codex-keyring-status.py", "--json"]
+```
+
+```json
+{
+  "state": {"activeAlias": "primary-codex", "autoSwitch": true},
+  "aliases": [
+    {
+      "alias": "primary-codex",
+      "active": true,
+      "limit5hRemainingPercent": 25,
+      "limitWeekRemainingPercent": 25,
+      "quotaObservedAt": "2026-08-07T12:00:00Z",
+      "confidence": "exact",
+      "health": "active",
+      "manualOnly": false
+    }
+  ]
+}
+```
+
+Desktop ChatGPT synchronization is opt-in. Keep `desktop_chatgpt_sync` false unless a private rollout explicitly defines how desktop session routing should be coordinated; this controller does not copy auth files or tokens between hosts.
+
+Apply uses an exclusive non-blocking file lock for the complete transaction: state load, status read, planning, and execution. Receipts record the ordered action attempt list, redacted argv, return codes, and whether execution stopped early. They do not store command stdout, auth payloads, or secret-bearing argument values. Apply is fail-closed: the first failed command stops the run, writes a receipt, and persists `partial_failure` state whenever a state path exists, even if the failed action was first. Future plans return `blocked_partial_failure` with zero actions until an operator reconciles or clears that state.
 
 ### As an OpenClaw cron
 
@@ -92,88 +167,18 @@ Not all providers bill the same way. Common mistake: confusing rate limits with 
 ## Files
 
 - `SKILL.md` — OpenClaw skill definition
+- `fleet_controller.py` — Codex fleet policy/controller
+- `config/fleet.example.json` — placeholder fleet config showing hosts and arbitrary agents
+- `tests/` — standard-library unit tests for fleet policy and CLI behavior
 - `scripts/orchestrate.sh` — main orchestrator script
+- `scripts/fleet.py` — thin executable CLI for fleet plan/apply/status
 - `scripts/check-providers.sh` — health check individual providers
 - `scripts/scrape-quota.sh` — scrape provider dashboards
 - `scripts/update-crons.sh` — batch update cron model assignments
-
-## Fleet Account Drain
-
-Distribute Codex work across multiple accounts on multiple agent surfaces, draining accounts in priority order with safe plan/apply separation.
-
-### Setup
-
-1. Copy the example config:
-   ```bash
-   cp config/accounts.example.yaml config/accounts.yaml
-   ```
-
-2. Edit `config/accounts.yaml` with your account names, priorities, explicit `current_assignments`, and agent surfaces. Never put secrets in the config. Use protected per-account `auth_source_path` values such as `~/.codex/accounts/luna/auth.json` and the active destination `~/.codex/auth.json`.
-
-3. Run the quota scraper once per account. Each Camofox session must already be authenticated to the matching account before you scrape it; the scraper only reads the quota page for that session. The scripts default to the public `CAMOFOX_USER_ID=operator`, so set `CAMOFOX_USER_ID` to your stored profile when you reuse a personal Camofox session.
-
-   These invocations populate the `quota_file` paths from `config/accounts.example.yaml`:
-   ```bash
-   CAMOFOX_USER_ID="luna" \
-   CAMOFOX_SESSION_KEY="openai-codex-quota-luna" \
-   GOOGLE_LOGIN_EMAIL="luna@example.invalid" \
-   CODEX_QUOTA_FILE="state/openai-codex-quota-luna.json" \
-   ./scripts/scrape-quota-openai-codex.sh
-
-   CAMOFOX_USER_ID="herald" \
-   CAMOFOX_SESSION_KEY="openai-codex-quota-herald" \
-   GOOGLE_LOGIN_EMAIL="herald@example.invalid" \
-   CODEX_QUOTA_FILE="state/openai-codex-quota-herald.json" \
-   ./scripts/scrape-quota-openai-codex.sh
-   ```
-
-### Usage
-
-```bash
-# Show fleet status
-python3 scripts/fleet_drain_cli.py --config config/accounts.yaml status
-
-# Generate a switch plan artifact (always safe - no mutations)
-python3 scripts/fleet_drain_cli.py --config config/accounts.yaml plan --out state/fleet-drain-plan.json
-
-# Review as JSON
-python3 scripts/fleet_drain_cli.py --config config/accounts.yaml plan --json
-
-# Dry-run the reviewed artifact
-python3 scripts/fleet_drain_cli.py --config config/accounts.yaml apply --plan state/fleet-drain-plan.json
-
-# Execute the reviewed artifact (--confirm required for real changes)
-python3 scripts/fleet_drain_cli.py --config config/accounts.yaml apply --plan state/fleet-drain-plan.json --confirm
-```
-
-### Policy
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `min_remaining_pct` | 10 | Switch away when account drops below this |
-| `target_remaining_pct` | 50 | Replacement eligibility/hysteresis: targets must be at or above this; current accounts between min and target stay active |
-| `drain_order` | priority | `priority` \| `most_remaining` \| `round_robin` |
-
-### Safety Contract
-
-Plan/apply is a review boundary. `plan` writes an artifact with schema version, config digest, action digest, full plan digest, quota snapshot, and one action per unique surface. `apply` consumes that exact artifact, regenerates the expected actions under the current policy, rejects config/action/plan drift, duplicate surface IDs, unknown accounts, and unsafe current state, and defaults to dry-run.
-
-Confirmed apply uses SSH with a static remote script sent on stdin. The SSH host must already have a trusted key in `known_hosts`; the command never auto-accepts a new host key. The remote script validates source/destination paths and JSON, verifies the active auth matches the declared current account source before mutation, backs up the active auth, installs the target auth atomically as mode `0600`, verifies target identity when available, and runs `codex login status`. Any post-mutation verification failure rolls back to the prior auth. Auth contents and tokens are never printed or returned.
-
-### Tests
-
-```bash
-python3 -m pytest model-orchestrator/tests/ -v
-```
 
 ## Requirements
 
 - OpenClaw with cron support
 - `curl`, `jq` (standard OpenClaw deps)
-- Provider API keys configured
-- Python 3.9+ (for quota scraping scripts and fleet drain)
-- `pyyaml` for YAML account config
-
-## Credits
-
-Built by the [Enterprise Crew](https://github.com/henrino3) for [OpenClaw](https://github.com/openclaw/openclaw).
+- Provider API keys configured outside public files
+- Python 3 (for quota scraping scripts)

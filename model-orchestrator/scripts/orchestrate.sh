@@ -42,7 +42,7 @@ check_providers() {
   # Test MiniMax
   echo -n "MiniMax... "
   MINIMAX_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time $TIMEOUT \
-    -H "x-api-key: $(cat ${MINIMAX_API_KEY_FILE:-~/.openclaw/secrets/minimax.key} 2>/dev/null || grep -o '"apiKey": *"[^"]*"' ~/.openclaw/openclaw.json 2>/dev/null | head -1 | cut -d'"' -f4)" \
+    -H "x-api-key: *** ${MINIMAX_API_KEY:-}" \
     -H "Content-Type: application/json" \
     -H "anthropic-version: 2023-06-01" \
     -d '{"model":"MiniMax-M2.1","messages":[{"role":"user","content":"ping"}],"max_tokens":5}' \
@@ -57,14 +57,10 @@ check_providers() {
   
   # Test Gemini Flash 3
   echo -n "Gemini Flash 3... "
-  if [[ -z "${GEMINI_API_KEY:-}" ]]; then
-    echo "NO KEY"
-    results+=("gemini-flash:no_key")
-  else
-    GEMINI_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time $TIMEOUT \
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${GEMINI_API_KEY}" \
-      -H "Content-Type: application/json" \
-      -d '{"contents":[{"parts":[{"text":"ping"}]}]}' 2>/dev/null || echo "000")
+  GEMINI_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time $TIMEOUT \
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${GEMINI_API_KEY:-}" \
+    -H "Content-Type: application/json" \
+    -d '{"contents":[{"parts":[{"text":"ping"}]}]}' 2>/dev/null || echo "000")
   if [[ "$GEMINI_CODE" == "200" ]]; then
     echo "UP"
     results+=("gemini-flash:up")
@@ -74,7 +70,6 @@ check_providers() {
   else
     echo "DOWN ($GEMINI_CODE)"
     results+=("gemini-flash:down:$GEMINI_CODE")
-  fi
   fi
   
   # Test Kimi

@@ -12,5 +12,8 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# CodeDB snapshots
+codedb.snapshot
+
 # OS
 .DS_Store

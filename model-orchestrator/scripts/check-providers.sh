@@ -25,15 +25,11 @@ fi
 
 # Test Gemini Flash 3
 GEMINI_KEY="${GEMINI_API_KEY:-}"
-if [[ -n "$GEMINI_KEY" ]]; then
-  GEMINI_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time $TIMEOUT \
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=$GEMINI_KEY" \
-    -H "Content-Type: application/json" \
-    -d '{"contents":[{"parts":[{"text":"ping"}]}]}' 2>/dev/null || echo "000")
-  [[ "$GEMINI_CODE" == "200" ]] && GEMINI_S="up" || { [[ "$GEMINI_CODE" == "429" ]] && GEMINI_S="rate_limited" || GEMINI_S="down"; }
-else
-  GEMINI_S="no_key"
-fi
+GEMINI_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time $TIMEOUT \
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=$GEMINI_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"contents":[{"parts":[{"text":"ping"}]}]}' 2>/dev/null || echo "000")
+[[ "$GEMINI_CODE" == "200" ]] && GEMINI_S="up" || { [[ "$GEMINI_CODE" == "429" ]] && GEMINI_S="rate_limited" || GEMINI_S="down"; }
 
 # Test GLM (Z.ai) — use quota scraper if Camofox available, else API ping
 GLM_QUOTA_FILE="$STATE_DIR/glm-quota.json"
@@ -181,7 +177,7 @@ OPENAI_TIER=""
 OPENAI_CODEX_USAGE=""
 
 # API ping (fast check — is OpenAI API reachable?)
-OPENAI_KEY="${OPENAI_API_KEY:-$(cat ~/.codex/codex-api-key 2>/dev/null || echo "")}"
+OPENAI_KEY="${OPENAI_API_KEY:-}"
 if [[ -n "$OPENAI_KEY" ]]; then
   OPENAI_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time $TIMEOUT \
     -H "Authorization: Bearer $OPENAI_KEY" \

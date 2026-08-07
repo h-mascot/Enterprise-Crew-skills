@@ -2,7 +2,7 @@
 # scrape-quota-openai-codex.sh — Scrape OpenAI Codex usage from chatgpt.com
 #
 # WORKFLOW:
-#   1. Login to Google (accounts.google.com) with ${GOOGLE_LOGIN_EMAIL:-operator@example.com}
+#   1. Login to Google (accounts.google.com) with $GOOGLE_EMAIL
 #   2. Login to platform.openai.com via Google OAuth (same-tab redirect works)
 #   3. Navigate to chatgpt.com/codex/settings/usage (session shared)
 #   4. Parse accessibility snapshot for usage percentages
@@ -14,13 +14,13 @@
 set -uo pipefail
 
 CAMOFOX_URL="${CAMOFOX_URL:-http://localhost:9377}"
-API_KEY="${CAMOFOX_API_KEY:-$(grep CAMOFOX_API_KEY ~/clawd/secrets/camofox.env 2>/dev/null | cut -d= -f2)}"
-CAMOFOX_USER_ID="${CAMOFOX_USER_ID:-operator}"
-CAMOFOX_SESSION_KEY="${CAMOFOX_SESSION_KEY:-openai-codex-quota}"
+API_KEY="${CAMOFOX_API_KEY:-}"
+USER_ID="ada"
+SESSION_KEY="openai-codex-quota"
 STATE_DIR="$(cd "$(dirname "$0")" && pwd)/../state"
-CODEX_QUOTA_FILE="${CODEX_QUOTA_FILE:-$STATE_DIR/openai-codex-quota.json}"
-mkdir -p "$(dirname "$CODEX_QUOTA_FILE")"
+QUOTA_FILE="$STATE_DIR/openai-codex-quota.json"
 NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+GOOGLE_EMAIL="${GOOGLE_EMAIL:-}"
 GOOGLE_PASS="${GOOGLE_PASS:-}"
 
 H=(-H "x-api-key: $API_KEY")
@@ -29,37 +29,37 @@ J=(-H "Content-Type: application/json")
 cf() { curl -sf "$@"; }
 
 cleanup_tab() {
-  [[ -n "${1:-}" ]] && cf -X DELETE "${CAMOFOX_URL}/tabs/${1}?userId=${CAMOFOX_USER_ID}&sessionKey=${CAMOFOX_SESSION_KEY}" "${H[@]}" >/dev/null 2>&1 || true
+  [[ -n "${1:-}" ]] && cf -X DELETE "${CAMOFOX_URL}/tabs/${1}?userId=${USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" >/dev/null 2>&1 || true
 }
 
 err() {
-  echo "{\"error\":\"$1\",\"checked_at\":\"$NOW_ISO\"}" | tee "$CODEX_QUOTA_FILE"
+  echo "{\"error\":\"$1\",\"checked_at\":\"$NOW_ISO\"}" | tee "$QUOTA_FILE"
   exit 1
 }
 
 snap() {
-  cf "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${CAMOFOX_USER_ID}&sessionKey=${CAMOFOX_SESSION_KEY}" "${H[@]}" \
+  cf "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" \
     | python3 -c "import json,sys; print(json.load(sys.stdin).get('snapshot',''))" 2>/dev/null
 }
 
 nav() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/navigate" "${J[@]}" "${H[@]}" \
-    -d "{\"url\":\"$1\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$CAMOFOX_SESSION_KEY\"}" >/dev/null
+    -d "{\"url\":\"$1\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 click_ref() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/click" "${J[@]}" "${H[@]}" \
-    -d "{\"ref\":\"$1\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$CAMOFOX_SESSION_KEY\"}" >/dev/null
+    -d "{\"ref\":\"$1\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 type_ref() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/type" "${J[@]}" "${H[@]}" \
-    -d "{\"ref\":\"$1\",\"text\":\"$2\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$CAMOFOX_SESSION_KEY\"}" >/dev/null
+    -d "{\"ref\":\"$1\",\"text\":\"$2\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 press_key() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/press" "${J[@]}" "${H[@]}" \
-    -d "{\"key\":\"$1\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$CAMOFOX_SESSION_KEY\"}" >/dev/null
+    -d "{\"key\":\"$1\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 # Check Camofox
@@ -67,7 +67,7 @@ cf --max-time 5 "$CAMOFOX_URL/health" "${H[@]}" >/dev/null 2>&1 || err "camofox_
 
 # --- Create tab ---
 TAB=$(cf -X POST "$CAMOFOX_URL/tabs" "${J[@]}" "${H[@]}" \
-  -d "{\"url\":\"https://chatgpt.com/codex/settings/usage\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$CAMOFOX_SESSION_KEY\"}" \
+  -d "{\"url\":\"https://chatgpt.com/codex/settings/usage\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
   | python3 -c "import json,sys; print(json.load(sys.stdin).get('tabId',''))" 2>/dev/null)
 [[ -n "$TAB" ]] || err "tab_create_failed"
 sleep 6
@@ -83,13 +83,12 @@ if echo "$SNAP_TEXT" | grep -q "Log in\|Sign up for free\|Welcome back"; then
   SNAP_TEXT=$(snap)
 
   if echo "$SNAP_TEXT" | grep -q "Email or phone"; then
-    type_ref "e1" "${GOOGLE_LOGIN_EMAIL:-operator@example.com}"
+    type_ref "e1" "${GOOGLE_EMAIL:-}"
     sleep 1
     press_key "Enter"
     sleep 5
     SNAP_TEXT=$(snap)
     if echo "$SNAP_TEXT" | grep -q "Enter your password"; then
-      [[ -n "$GOOGLE_PASS" ]] || err "google_password_required_or_login_manually"
       type_ref "e2" "$GOOGLE_PASS"
       sleep 1
       press_key "Enter"
@@ -137,7 +136,7 @@ import json, re, sys
 
 snap = """$(echo "$SNAP_TEXT" | sed "s/\"/\\\\\\\\\\\\&/g")"""
 now_iso = "$NOW_ISO"
-quota_file = "$CODEX_QUOTA_FILE"
+quota_file = "$QUOTA_FILE"
 
 # Parse 5 hour usage
 m = re.search(r'5 hour usage limit.*?(\d+)% remaining.*?Resets (.+?)$', snap, re.M | re.S)
@@ -179,7 +178,7 @@ result = {
     "weekly_remaining_pct": weekly_pct,
     "weekly_resets": weekly_resets,
     "code_review_remaining_pct": code_review_pct,
-    "login": "${GOOGLE_LOGIN_EMAIL:-operator@example.com} (Google OAuth via platform.openai.com)",
+    "login": "${GOOGLE_EMAIL:-} (Google OAuth via platform.openai.com)",
     "status": status,
     "status_reason": reason,
     "checked_at": now_iso
