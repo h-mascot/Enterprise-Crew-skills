@@ -33,6 +33,12 @@ from fleet_drain import (  # noqa: E402
 )
 
 
+def _strip_email_fields(config_text):
+    return "\n".join(
+        line for line in config_text.splitlines() if not line.lstrip().startswith("email:")
+    )
+
+
 class TestConfigLoading:
     def test_loads_accounts_surfaces_policy_and_current(self, config_file):
         accounts, policy, ssh = load_config(config_file)
@@ -280,6 +286,47 @@ class TestPlanGeneration:
         assert {a.proposed_account for a in actions} == {"herald"}
         assert all(not a.is_noop for a in actions)
 
+    def test_same_auth_source_replacement_blocks_with_identity_emails_absent(
+        self, tmp_path, sample_config_yaml
+    ):
+        cfg = tmp_path / "same-source-no-identity.yaml"
+        cfg.write_text(
+            _strip_email_fields(sample_config_yaml).replace(
+                "~/.codex/accounts/herald/auth.json",
+                "~/.codex/accounts/luna/auth.json",
+            )
+        )
+        accounts, policy, ssh = load_config(cfg)
+        set_manual_quota(
+            accounts,
+            {
+                "luna": {
+                    "five_hour_remaining_pct": 2,
+                    "weekly_remaining_pct": 5,
+                    "status": "exhausted",
+                },
+                "herald": {
+                    "five_hour_remaining_pct": 70,
+                    "weekly_remaining_pct": 85,
+                    "status": "healthy",
+                },
+            },
+        )
+
+        actions = generate_plan(accounts, policy, ssh["_current_assignments"])
+
+        assert all(action.is_blocked for action in actions)
+        assert all(action.current_account == "luna" for action in actions)
+        assert all(action.proposed_account == "luna" for action in actions)
+        assert {
+            action.current_auth_source_path for action in actions
+        } == {"~/.codex/accounts/luna/auth.json"}
+        assert all(
+            action.reason
+            == "BLOCKED: replacement auth source matches current auth source"
+            for action in actions
+        )
+
     def test_plan_json_contains_schema_digest_and_summary(self, accounts_with_quota, config_file):
         accounts, policy, ssh = accounts_with_quota
         actions = generate_plan(accounts, policy, ssh["_current_assignments"])
@@ -375,6 +422,76 @@ class TestApply:
         artifact["plan_digest"] = _plan_digest(artifact)
         with pytest.raises(PlanValidationError, match="invalid plan top-level fields"):
             validate_plan_artifact(artifact, accounts, config_digest(config_file))
+
+    def test_exact_action_schema_fields_required_without_policy(
+        self, exhausted_luna, config_file
+    ):
+        accounts, policy, ssh = exhausted_luna
+        artifact = self._switch_artifact(accounts, policy, ssh, config_digest(config_file))
+        del artifact["actions"][0]["reason"]
+        self._refresh_digests(artifact)
+        with pytest.raises(PlanValidationError, match="invalid action fields"):
+            validate_plan_artifact(artifact, accounts, config_digest(config_file))
+
+    def test_extra_action_schema_fields_rejected_without_policy(
+        self, exhausted_luna, config_file
+    ):
+        accounts, policy, ssh = exhausted_luna
+        artifact = self._switch_artifact(accounts, policy, ssh, config_digest(config_file))
+        artifact["actions"][0]["review_note"] = "unexpected"
+        self._refresh_digests(artifact)
+        with pytest.raises(PlanValidationError, match="invalid action fields"):
+            validate_plan_artifact(artifact, accounts, config_digest(config_file))
+
+    def test_same_auth_source_switch_artifact_is_rejected_before_apply(
+        self, tmp_path, sample_config_yaml
+    ):
+        cfg = tmp_path / "same-source.yaml"
+        cfg.write_text(
+            sample_config_yaml.replace(
+                "~/.codex/accounts/herald/auth.json",
+                "~/.codex/accounts/luna/auth.json",
+            )
+        )
+        accounts, policy, ssh = load_config(cfg)
+        set_manual_quota(
+            accounts,
+            {
+                "luna": {
+                    "five_hour_remaining_pct": 2,
+                    "weekly_remaining_pct": 5,
+                    "status": "exhausted",
+                },
+                "herald": {
+                    "five_hour_remaining_pct": 70,
+                    "weekly_remaining_pct": 85,
+                    "status": "healthy",
+                },
+            },
+        )
+        actions = generate_plan(accounts, policy, ssh["_current_assignments"])
+        artifact = build_plan_artifact(
+            actions, accounts, policy, config_digest(cfg), ssh["_current_assignments"]
+        )
+        artifact["actions"][0]["proposed_account"] = "herald"
+        artifact["actions"][0]["reason"] = "tampered switch"
+        artifact["actions"][0]["proposed_remaining_pct"] = 70
+        artifact["summary"] = {
+            "total": len(artifact["actions"]),
+            "switches": 1,
+            "blocked": len(artifact["actions"]) - 1,
+            "noop": 0,
+        }
+        self._refresh_digests(artifact)
+
+        with pytest.raises(PlanValidationError, match="auth source matches current"):
+            apply_plan(
+                artifact,
+                accounts,
+                config_digest_value=config_digest(cfg),
+                policy=None,
+                confirm=False,
+            )
 
     def test_tampered_summary_rejected_after_plan_digest_recomputed(
         self, exhausted_luna, config_file
