@@ -47,6 +47,49 @@ When 2+ providers are down:
 - Create one-shot `at` crons to check recovery
 - Auto-redistribute when providers come back
 
+## Fleet Account Drain
+
+Account-aware Codex quota policy for distributing work across multiple Codex accounts (Luna, Herald, etc.) on multiple agent surfaces (Geordi on Enterprise, Geordi on MascotM3, etc.).
+
+### Drain Policy
+
+- **min_remaining_pct** — switch away from an account when its remaining quota drops below this (default: 10%)
+- **target_remaining_pct** — an account must be above this to be preferred primary (default: 50%)
+- **drain_order** — how to rank accounts: `priority` (drain low-priority-number first), `most_remaining`, `round_robin`
+
+### Safe plan/apply
+
+The drain module separates planning from execution:
+
+1. `plan` — generates a JSON plan of proposed switches. Always safe, no mutations.
+2. `apply` — executes the plan. Requires `--confirm` to make changes; defaults to dry run.
+
+### Config
+
+Copy `config/accounts.example.yaml` to `config/accounts.yaml` and fill in real values. The real config is git-ignored. Never store secrets inline — config references auth file paths, not tokens.
+
+### CLI
+
+```bash
+# Show all accounts, quotas, active surfaces
+python3 scripts/fleet_drain_cli.py --config config/accounts.yaml status
+
+# Generate a switch plan (safe, no mutations)
+python3 scripts/fleet_drain_cli.py --config config/accounts.yaml plan
+
+# Execute switches (dry run unless --confirm)
+python3 scripts/fleet_drain_cli.py --config config/accounts.yaml apply --confirm
+```
+
+### Python API
+
+```python
+from fleet_drain import FleetDrain
+fd = FleetDrain("config/accounts.yaml")
+plan = fd.plan()
+result = fd.apply(plan, confirm=True)
+```
+
 ## Files
 - `state/cron-tiers.json` — cron ID → tier mapping + metadata
 - `state/provider-status.json` — compact current provider health/quota snapshot (backward-compatible)
@@ -55,3 +98,7 @@ When 2+ providers are down:
 - `scripts/orchestrate.sh` — main orchestrator (run daily or on-demand)
 - `scripts/check-provider.sh` — test a single provider
 - `scripts/scrape-quota.sh` — scrape dashboards for quota info
+- `scripts/fleet_drain.py` — account-aware Codex quota policy core module
+- `scripts/fleet_drain_cli.py` — CLI for fleet drain (status/plan/apply)
+- `config/accounts.example.yaml` — example account configuration (no secrets)
+- `tests/` — pytest suite for fleet drain logic

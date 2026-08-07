@@ -97,12 +97,58 @@ Not all providers bill the same way. Common mistake: confusing rate limits with 
 - `scripts/scrape-quota.sh` — scrape provider dashboards
 - `scripts/update-crons.sh` — batch update cron model assignments
 
+## Fleet Account Drain
+
+Distribute Codex work across multiple accounts on multiple agent surfaces, draining accounts in priority order with safe plan/apply separation.
+
+### Setup
+
+1. Copy the example config:
+   ```bash
+   cp config/accounts.example.yaml config/accounts.yaml
+   ```
+
+2. Edit `config/accounts.yaml` with your account names, priorities, and agent surfaces (hosts + Codex CLI paths). Never put secrets in the config — it references auth file paths.
+
+3. Run quota scrapers first (they populate the state files the drain module reads):
+   ```bash
+   ./scripts/scrape-quota-openai-codex.sh
+   ```
+
+### Usage
+
+```bash
+# Show fleet status
+python3 scripts/fleet_drain_cli.py --config config/accounts.yaml status
+
+# Generate a switch plan (always safe — no mutations)
+python3 scripts/fleet_drain_cli.py --config config/accounts.yaml plan
+
+# Execute the plan (--confirm required for real changes)
+python3 scripts/fleet_drain_cli.py --config config/accounts.yaml apply --confirm
+```
+
+### Policy
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `min_remaining_pct` | 10 | Switch away when account drops below this |
+| `target_remaining_pct` | 50 | Account must be above this to stay primary |
+| `drain_order` | priority | `priority` \| `most_remaining` \| `round_robin` |
+
+### Tests
+
+```bash
+python3 -m pytest model-orchestrator/tests/ -v
+```
+
 ## Requirements
 
 - OpenClaw with cron support
 - `curl`, `jq` (standard OpenClaw deps)
 - Provider API keys configured
-- Python 3 (for quota scraping scripts)
+- Python 3.9+ (for quota scraping scripts and fleet drain)
+- `pyyaml` (optional — enables full YAML config; falls back to minimal parser)
 
 ## Credits
 

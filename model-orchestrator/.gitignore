@@ -1,0 +1,16 @@
+# Model Orchestrator — gitignore
+
+# State files (may contain quota data with account-specific info)
+state/
+
+# Real account config (only .example.yaml is tracked)
+config/accounts.yaml
+config/accounts.json
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# OS
+.DS_Store

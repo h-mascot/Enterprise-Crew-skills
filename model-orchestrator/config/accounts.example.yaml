@@ -1,0 +1,56 @@
+# Example account configuration for fleet-wide Codex account drain.
+#
+# Copy to accounts.yaml and fill in real values. The real accounts.yaml is
+# git-ignored and must never contain secrets inline — only paths/refs.
+#
+# Secret handling: auth_file paths point to JSON auth files managed outside
+# this repo (e.g. ~/.codex/auth.json). Never paste tokens here.
+
+accounts:
+  - name: luna
+    email: henrino3@gmail.com
+    priority: 1              # lower number = drain first
+    quota_source: camofox    # how quota is read: camofox | api | manual
+    quota_file: state/openai-codex-quota-luna.json
+    surfaces:
+      - host: enterprise      # friendly hostname or IP
+        agent: geordi
+        ssh_target: enterprise@100.104.229.62
+        codex_cli_path: /usr/local/bin/codex
+        auth_file: ~/.codex/auth.json
+      - host: mascotm3
+        agent: geordi
+        ssh_target: henrymascot@100.86.150.96
+        codex_cli_path: ~/.npm-global/bin/codex
+        auth_file: ~/.codex/auth.json
+
+  - name: herald
+    email: henry@theherald.co
+    priority: 2
+    quota_source: camofox
+    quota_file: state/openai-codex-quota-herald.json
+    surfaces:
+      - host: enterprise
+        agent: geordi
+        ssh_target: enterprise@100.104.229.62
+        codex_cli_path: /usr/local/bin/codex
+        auth_file: ~/.codex/auth.json
+
+policy:
+  # Switch away from an account when its remaining quota drops below this.
+  min_remaining_pct: 10
+  # An account must be above this to be a preferred primary target.
+  target_remaining_pct: 50
+  # How to rank accounts for drain order.
+  #   priority      — use the priority field (drain low-priority-number first)
+  #   most_remaining — rank by highest remaining quota pct
+  #   round_robin    — rotate through accounts evenly
+  drain_order: priority
+  # plan is always safe (no mutations). apply requires --confirm.
+  dry_run_default: true
+
+ssh:
+  defaults:
+    user: enterprise
+    key: ~/.ssh/id_ed25519
+    timeout: 15
