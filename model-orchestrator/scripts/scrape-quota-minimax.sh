@@ -8,7 +8,7 @@ set -uo pipefail
 
 CAMOFOX_URL="${CAMOFOX_URL:-http://localhost:9377}"
 API_KEY="${CAMOFOX_API_KEY:-$(grep CAMOFOX_API_KEY ~/clawd/secrets/camofox.env 2>/dev/null | cut -d= -f2)}"
-USER_ID="ada"
+CAMOFOX_USER_ID="${CAMOFOX_USER_ID:-operator}"
 SESSION_KEY="minimax-quota"
 STATE_DIR="$(cd "$(dirname "$0")" && pwd)/../state"
 QUOTA_FILE="$STATE_DIR/minimax-quota.json"
@@ -44,14 +44,14 @@ if curl -sf --max-time 3 "$CAMOFOX_URL/health" -H "x-api-key: $API_KEY" >/dev/nu
   TAB_ID=$(curl -sf -X POST "$CAMOFOX_URL/tabs" \
     -H "Content-Type: application/json" \
     -H "x-api-key: $API_KEY" \
-    -d "{\"url\":\"https://platform.minimax.io/subscribe/coding-plan\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
+    -d "{\"url\":\"https://platform.minimax.io/subscribe/coding-plan\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
     | python3 -c "import json,sys; print(json.load(sys.stdin)['tabId'])" 2>/dev/null)
 
   if [[ -n "$TAB_ID" ]]; then
     sleep 5
-    SNAPSHOT=$(curl -s --max-time 15 "${CAMOFOX_URL}/tabs/${TAB_ID}/snapshot?userId=${USER_ID}&sessionKey=${SESSION_KEY}" \
+    SNAPSHOT=$(curl -s --max-time 15 "${CAMOFOX_URL}/tabs/${TAB_ID}/snapshot?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" \
       -H "x-api-key: $API_KEY" 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('snapshot',''))" 2>/dev/null)
-    curl -s -X DELETE "${CAMOFOX_URL}/tabs/${TAB_ID}?userId=${USER_ID}&sessionKey=${SESSION_KEY}" \
+    curl -s -X DELETE "${CAMOFOX_URL}/tabs/${TAB_ID}?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" \
       -H "x-api-key: $API_KEY" >/dev/null 2>&1
 
     if [[ -n "$SNAPSHOT" ]]; then
@@ -59,10 +59,10 @@ if curl -sf --max-time 3 "$CAMOFOX_URL/health" -H "x-api-key: $API_KEY" >/dev/nu
       DASHBOARD_STATUS="scraped"
 
       # Parse plan info from snapshot
-      PARSED=$(python3 << 'PYEOF'
+      PARSED=$(python3 - "$TMP_SNAPSHOT" << 'PYEOF'
 import json, re, sys, os
 
-tmp = os.environ.get("TMP_SNAPSHOT", "")
+tmp = sys.argv[1]
 with open(tmp) as f:
     snapshot = f.read()
 
@@ -110,22 +110,45 @@ fi
 STATUS="$API_STATUS"
 [[ "$PLAN" == "session_expired" ]] && DASHBOARD_STATUS="session_expired"
 
-# Write result
-python3 << PYEOF
-import json
+# Write result. Pass shell values as arguments so the quoted heredoc cannot
+# accidentally write literal "$VARIABLE" placeholders.
+python3 - \
+  "$CAMOFOX_USER_ID" \
+  "$SESSION_KEY" \
+  "$API_STATUS" \
+  "$PLAN" \
+  "$PLAN_LIMIT" \
+  "$DASHBOARD_STATUS" \
+  "${MINIMAX_LOGIN_EMAIL:-operator@example.com}" \
+  "$STATUS" \
+  "$NOW_ISO" \
+  "$QUOTA_FILE" << 'PYEOF'
+import json, sys
+(
+    user_id,
+    session_key,
+    api_status,
+    plan,
+    plan_limit,
+    dashboard_status,
+    login_email,
+    status,
+    checked_at,
+    quota_file,
+) = sys.argv[1:]
 result = {
     "provider": "minimax",
-    "api_status": "$API_STATUS",
-    "plan": "$PLAN",
-    "plan_limit": "$PLAN_LIMIT",
-    "dashboard_status": "$DASHBOARD_STATUS",
-    "login": "henrino3@gmail.com",
-    "camofox_session": "userId=ada, sessionKey=minimax-quota",
+    "api_status": api_status,
+    "plan": plan,
+    "plan_limit": plan_limit,
+    "dashboard_status": dashboard_status,
+    "login": login_email,
+    "camofox_session": f"userId={user_id}, sessionKey={session_key}",
     "dashboard_url": "https://platform.minimax.io/subscribe/coding-plan",
     "note": "MiniMax uses rolling prompt limits (no usage meter). API ping is primary health signal.",
-    "status": "$STATUS",
-    "checked_at": "$NOW_ISO"
+    "status": status,
+    "checked_at": checked_at,
 }
-json.dump(result, open("$QUOTA_FILE", "w"), indent=2)
+json.dump(result, open(quota_file, "w"), indent=2)
 print(json.dumps(result, indent=2))
 PYEOF

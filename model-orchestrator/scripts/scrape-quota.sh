@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # scrape-quota.sh — Scrape Kimi quota from console via Camofox browser
 # Part of model-orchestrator. Outputs JSON with quota info.
-# Requires: Camofox running on localhost:9377, authenticated session (ada/kimi-quota)
+# Requires: Camofox running on localhost:9377, authenticated session (operator/kimi-quota)
 set -uo pipefail
 
 CAMOFOX_URL="${CAMOFOX_URL:-http://localhost:9377}"
 API_KEY="${CAMOFOX_API_KEY:-$(cat ~/clawd/secrets/camofox.env 2>/dev/null | grep CAMOFOX_API_KEY | cut -d= -f2)}"
-USER_ID="ada"
+CAMOFOX_USER_ID="${CAMOFOX_USER_ID:-operator}"
 SESSION_KEY="kimi-quota"
 STATE_DIR="$(cd "$(dirname "$0")" && pwd)/../state"
 QUOTA_FILE="$STATE_DIR/kimi-quota.json"
@@ -28,18 +28,18 @@ curl -sf --max-time 5 "$CAMOFOX_URL/health" -H "x-api-key: $API_KEY" >/dev/null 
 TAB_ID=$(curl -sf -X POST "$CAMOFOX_URL/tabs" \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
-  -d "{\"url\":\"https://www.kimi.com/code/console\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
+  -d "{\"url\":\"https://www.kimi.com/code/console\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['tabId'])" 2>/dev/null) || err "tab_create_failed"
 
 sleep 5
 
 # Get snapshot → save to temp file (avoids shell quoting issues)
-curl -s --max-time 15 "${CAMOFOX_URL}/tabs/${TAB_ID}/snapshot?userId=${USER_ID}&sessionKey=${SESSION_KEY}" \
+curl -s --max-time 15 "${CAMOFOX_URL}/tabs/${TAB_ID}/snapshot?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" \
   -H "x-api-key: $API_KEY" -o "$TMP_SNAPSHOT" 2>/dev/null
-[[ -s "$TMP_SNAPSHOT" ]] || { curl -s -X DELETE "${CAMOFOX_URL}/tabs/${TAB_ID}?userId=${USER_ID}&sessionKey=${SESSION_KEY}" -H "x-api-key: $API_KEY" >/dev/null 2>&1; err "snapshot_failed"; }
+[[ -s "$TMP_SNAPSHOT" ]] || { curl -s -X DELETE "${CAMOFOX_URL}/tabs/${TAB_ID}?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" -H "x-api-key: $API_KEY" >/dev/null 2>&1; err "snapshot_failed"; }
 
 # Close tab
-curl -s -X DELETE "${CAMOFOX_URL}/tabs/${TAB_ID}?userId=${USER_ID}&sessionKey=${SESSION_KEY}" -H "x-api-key: $API_KEY" >/dev/null 2>&1
+curl -s -X DELETE "${CAMOFOX_URL}/tabs/${TAB_ID}?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" -H "x-api-key: $API_KEY" >/dev/null 2>&1
 
 # Parse quota from snapshot file
 python3 << PYEOF

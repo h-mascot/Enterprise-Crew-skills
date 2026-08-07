@@ -54,19 +54,41 @@ Account-aware Codex quota policy for distributing work across multiple Codex acc
 ### Drain Policy
 
 - **min_remaining_pct** — switch away from an account when its remaining quota drops below this (default: 10%)
-- **target_remaining_pct** — an account must be above this to be preferred primary (default: 50%)
+- **target_remaining_pct** — replacement eligibility/hysteresis: a target account must be at or above this value to receive a switch. Accounts between `min_remaining_pct` and `target_remaining_pct` stay active if already current, but are not selected as replacements.
 - **drain_order** — how to rank accounts: `priority` (drain low-priority-number first), `most_remaining`, `round_robin`
 
 ### Safe plan/apply
 
 The drain module separates planning from execution:
 
-1. `plan` — generates a JSON plan of proposed switches. Always safe, no mutations.
-2. `apply` — executes the plan. Requires `--confirm` to make changes; defaults to dry run.
+1. `plan` — generates a JSON artifact with schema version, config digest, action digest, full plan digest, quota snapshot, and proposed switches. Always safe, no mutations.
+2. `apply` — consumes an exact plan artifact with `--plan`, regenerates the expected actions under the current policy, and rejects config drift, action drift, duplicate surface IDs, unknown accounts, and unsafe current state. It is dry-run unless `--confirm` is passed.
+
+Current account assignment is explicit and fail-closed. Declare `current_assignments` in config or pass `--current SURFACE=ACCOUNT`; unknown or ambiguous current state produces blocked actions and never mutates.
+
+Confirmed apply switches auth over SSH with a static remote script sent on stdin. The host key must already be trusted in `known_hosts`; new keys are not auto-accepted. The remote side validates protected source auth JSON, verifies the active auth matches the declared current account before mutation, backs up the active auth, atomically installs the target auth as mode `0600`, verifies the target identity when available, runs `codex login status`, and rolls back automatically on post-mutation failures. It never prints or returns auth contents or tokens.
 
 ### Config
 
-Copy `config/accounts.example.yaml` to `config/accounts.yaml` and fill in real values. The real config is git-ignored. Never store secrets inline — config references auth file paths, not tokens.
+Copy `config/accounts.example.yaml` to `config/accounts.yaml` and fill in real values. The real config is git-ignored. Never store secrets inline. Each account/surface binding has `auth_source_path` for a protected per-account source, `active_auth_path` for the active Codex destination, and `codex_cli_path` for the remote Codex binary.
+
+Before you drain accounts, scrape each account into its matching quota file with a Camofox session that is already authenticated to that same account. The scripts default to the public `CAMOFOX_USER_ID=operator`, so set `CAMOFOX_USER_ID` to your stored profile when you reuse a personal Camofox session.
+
+```bash
+CAMOFOX_USER_ID="luna" \
+CAMOFOX_SESSION_KEY="openai-codex-quota-luna" \
+GOOGLE_LOGIN_EMAIL="luna@example.invalid" \
+CODEX_QUOTA_FILE="state/openai-codex-quota-luna.json" \
+./scripts/scrape-quota-openai-codex.sh
+
+CAMOFOX_USER_ID="herald" \
+CAMOFOX_SESSION_KEY="openai-codex-quota-herald" \
+GOOGLE_LOGIN_EMAIL="herald@example.invalid" \
+CODEX_QUOTA_FILE="state/openai-codex-quota-herald.json" \
+./scripts/scrape-quota-openai-codex.sh
+```
+
+The `CODEX_QUOTA_FILE` paths above line up with `config/accounts.example.yaml`. Do not reuse a Camofox session across different Codex accounts; the session must already be signed into the account that owns the quota file you are updating.
 
 ### CLI
 
@@ -74,11 +96,14 @@ Copy `config/accounts.example.yaml` to `config/accounts.yaml` and fill in real v
 # Show all accounts, quotas, active surfaces
 python3 scripts/fleet_drain_cli.py --config config/accounts.yaml status
 
-# Generate a switch plan (safe, no mutations)
-python3 scripts/fleet_drain_cli.py --config config/accounts.yaml plan
+# Generate a switch plan artifact (safe, no mutations)
+python3 scripts/fleet_drain_cli.py --config config/accounts.yaml plan --out state/fleet-drain-plan.json
 
-# Execute switches (dry run unless --confirm)
-python3 scripts/fleet_drain_cli.py --config config/accounts.yaml apply --confirm
+# Dry-run an existing artifact
+python3 scripts/fleet_drain_cli.py --config config/accounts.yaml apply --plan state/fleet-drain-plan.json
+
+# Execute an existing artifact
+python3 scripts/fleet_drain_cli.py --config config/accounts.yaml apply --plan state/fleet-drain-plan.json --confirm
 ```
 
 ### Python API
@@ -86,8 +111,8 @@ python3 scripts/fleet_drain_cli.py --config config/accounts.yaml apply --confirm
 ```python
 from fleet_drain import FleetDrain
 fd = FleetDrain("config/accounts.yaml")
-plan = fd.plan()
-result = fd.apply(plan, confirm=True)
+artifact = fd.plan_artifact()
+result = fd.apply(artifact, confirm=False)
 ```
 
 ## Files

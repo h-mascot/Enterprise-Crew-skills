@@ -108,10 +108,22 @@ Distribute Codex work across multiple accounts on multiple agent surfaces, drain
    cp config/accounts.example.yaml config/accounts.yaml
    ```
 
-2. Edit `config/accounts.yaml` with your account names, priorities, and agent surfaces (hosts + Codex CLI paths). Never put secrets in the config — it references auth file paths.
+2. Edit `config/accounts.yaml` with your account names, priorities, explicit `current_assignments`, and agent surfaces. Never put secrets in the config. Use protected per-account `auth_source_path` values such as `~/.codex/accounts/luna/auth.json` and the active destination `~/.codex/auth.json`.
 
-3. Run quota scrapers first (they populate the state files the drain module reads):
+3. Run the quota scraper once per account. Each Camofox session must already be authenticated to the matching account before you scrape it; the scraper only reads the quota page for that session. The scripts default to the public `CAMOFOX_USER_ID=operator`, so set `CAMOFOX_USER_ID` to your stored profile when you reuse a personal Camofox session.
+
+   These invocations populate the `quota_file` paths from `config/accounts.example.yaml`:
    ```bash
+   CAMOFOX_USER_ID="luna" \
+   CAMOFOX_SESSION_KEY="openai-codex-quota-luna" \
+   GOOGLE_LOGIN_EMAIL="luna@example.invalid" \
+   CODEX_QUOTA_FILE="state/openai-codex-quota-luna.json" \
+   ./scripts/scrape-quota-openai-codex.sh
+
+   CAMOFOX_USER_ID="herald" \
+   CAMOFOX_SESSION_KEY="openai-codex-quota-herald" \
+   GOOGLE_LOGIN_EMAIL="herald@example.invalid" \
+   CODEX_QUOTA_FILE="state/openai-codex-quota-herald.json" \
    ./scripts/scrape-quota-openai-codex.sh
    ```
 
@@ -121,11 +133,17 @@ Distribute Codex work across multiple accounts on multiple agent surfaces, drain
 # Show fleet status
 python3 scripts/fleet_drain_cli.py --config config/accounts.yaml status
 
-# Generate a switch plan (always safe — no mutations)
-python3 scripts/fleet_drain_cli.py --config config/accounts.yaml plan
+# Generate a switch plan artifact (always safe - no mutations)
+python3 scripts/fleet_drain_cli.py --config config/accounts.yaml plan --out state/fleet-drain-plan.json
 
-# Execute the plan (--confirm required for real changes)
-python3 scripts/fleet_drain_cli.py --config config/accounts.yaml apply --confirm
+# Review as JSON
+python3 scripts/fleet_drain_cli.py --config config/accounts.yaml plan --json
+
+# Dry-run the reviewed artifact
+python3 scripts/fleet_drain_cli.py --config config/accounts.yaml apply --plan state/fleet-drain-plan.json
+
+# Execute the reviewed artifact (--confirm required for real changes)
+python3 scripts/fleet_drain_cli.py --config config/accounts.yaml apply --plan state/fleet-drain-plan.json --confirm
 ```
 
 ### Policy
@@ -133,8 +151,14 @@ python3 scripts/fleet_drain_cli.py --config config/accounts.yaml apply --confirm
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `min_remaining_pct` | 10 | Switch away when account drops below this |
-| `target_remaining_pct` | 50 | Account must be above this to stay primary |
+| `target_remaining_pct` | 50 | Replacement eligibility/hysteresis: targets must be at or above this; current accounts between min and target stay active |
 | `drain_order` | priority | `priority` \| `most_remaining` \| `round_robin` |
+
+### Safety Contract
+
+Plan/apply is a review boundary. `plan` writes an artifact with schema version, config digest, action digest, full plan digest, quota snapshot, and one action per unique surface. `apply` consumes that exact artifact, regenerates the expected actions under the current policy, rejects config/action/plan drift, duplicate surface IDs, unknown accounts, and unsafe current state, and defaults to dry-run.
+
+Confirmed apply uses SSH with a static remote script sent on stdin. The SSH host must already have a trusted key in `known_hosts`; the command never auto-accepts a new host key. The remote script validates source/destination paths and JSON, verifies the active auth matches the declared current account source before mutation, backs up the active auth, installs the target auth atomically as mode `0600`, verifies target identity when available, and runs `codex login status`. Any post-mutation verification failure rolls back to the prior auth. Auth contents and tokens are never printed or returned.
 
 ### Tests
 
@@ -148,7 +172,7 @@ python3 -m pytest model-orchestrator/tests/ -v
 - `curl`, `jq` (standard OpenClaw deps)
 - Provider API keys configured
 - Python 3.9+ (for quota scraping scripts and fleet drain)
-- `pyyaml` (optional — enables full YAML config; falls back to minimal parser)
+- `pyyaml` for YAML account config
 
 ## Credits
 

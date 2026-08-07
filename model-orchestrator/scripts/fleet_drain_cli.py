@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""
-fleet_drain_cli.py — CLI wrapper for fleet-wide Codex account drain.
-
-Usage:
-    python3 fleet_drain_cli.py status
-    python3 fleet_drain_cli.py plan [--config CONFIG] [--current SURFACE=ACCOUNT ...]
-    python3 fleet_drain_cli.py apply [--config CONFIG] [--confirm] [--current SURFACE=ACCOUNT ...]
-"""
+"""CLI wrapper for fleet-wide Codex account drain."""
 
 from __future__ import annotations
 
@@ -15,36 +8,109 @@ import json
 import sys
 from pathlib import Path
 
-# Allow running from scripts/ directory
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from fleet_drain import (  # noqa: E402
     DEFAULT_CONFIG,
     FleetDrain,
-    apply_plan,
-    collect_quota,
-    format_status,
-    generate_plan,
-    load_config,
-    plan_to_json,
-    set_manual_quota,
+    PlanValidationError,
+    load_plan_artifact,
+    write_plan_artifact,
 )
 
 
-def parse_current_args(current_list: list[str]) -> dict[str, str]:
+def parse_current_args(current_list):
     """Parse --current surface=account pairs."""
     result = {}
     for item in current_list:
         if "=" not in item:
-            print(f"WARNING: ignoring malformed --current '{item}' (expected surface=account)", file=sys.stderr)
+            print(
+                "WARNING: ignoring malformed --current %r (expected surface=account)" % item,
+                file=sys.stderr,
+            )
             continue
         surface, account = item.split("=", 1)
         result[surface.strip()] = account.strip()
     return result
 
 
-def main(argv: list[str] | None = None) -> int:
+def _print_plan_text(artifact):
+    print("=== Fleet Drain Plan ===")
+    print()
+    for action in artifact["actions"]:
+        if action["reason"].startswith("BLOCKED"):
+            marker = "[blocked]"
+        elif action["current_account"] == action["proposed_account"]:
+            marker = "[noop]"
+        else:
+            marker = "[switch]"
+        print(
+            "%s %s: %s -> %s"
+            % (
+                marker,
+                action["surface_id"],
+                action["current_account"],
+                action["proposed_account"],
+            )
+        )
+        print("   %s" % action["reason"])
+    summary = artifact["summary"]
+    print()
+    print(
+        "Summary: %(switches)s switches | %(blocked)s blocked | %(noop)s no-op"
+        % summary
+    )
+
+
+def _print_apply_result(result):
+    print("=== Apply Result ===")
+    print()
+    print(
+        "Applied: %(applied_count)s | Failed: %(failed_count)s | "
+        "Blocked: %(blocked_count)s | No-op: %(noop_count)s" % result
+    )
+    if result["applied"]:
+        print("\nApplied switches:")
+        for action in result["applied"]:
+            print(
+                "  [ok] %s: %s -> %s"
+                % (
+                    action["surface_id"],
+                    action["current_account"],
+                    action["proposed_account"],
+                )
+            )
+    if result["failed"]:
+        print("\nFailed:")
+        for action in result["failed"]:
+            exec_result = action.get("exec_result", {})
+            reason = exec_result.get("error") or action.get("block_reason") or "unknown"
+            print(
+                "  [failed] %s: %s -> %s (%s)"
+                % (
+                    action["surface_id"],
+                    action.get("current_account", "?"),
+                    action.get("proposed_account", "?"),
+                    reason,
+                )
+            )
+    if result["blocked"]:
+        print("\nBlocked:")
+        for action in result["blocked"]:
+            reason = action.get("block_reason") or action.get("reason", "unknown")
+            print(
+                "  [blocked] %s: %s -> %s (%s)"
+                % (
+                    action["surface_id"],
+                    action.get("current_account", "?"),
+                    action.get("proposed_account", "?"),
+                    reason,
+                )
+            )
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Fleet-wide Codex account drain manager"
     )
@@ -55,44 +121,39 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub = parser.add_subparsers(dest="command")
 
-    sub.add_parser("status", help="Show all accounts, quotas, and active surfaces")
+    sub.add_parser("status", help="Show accounts, quota, and configured surfaces")
 
-    plan_parser = sub.add_parser("plan", help="Generate a switch plan (safe, no mutations)")
+    plan_parser = sub.add_parser("plan", help="Generate a reviewed switch plan")
     plan_parser.add_argument(
         "--current",
         action="append",
         default=[],
         metavar="SURFACE=ACCOUNT",
-        help="Current account assignment (e.g. enterprise:geordi=luna). Can repeat.",
+        help="Current account assignment, e.g. enterprise:geordi=luna. Can repeat.",
     )
+    plan_parser.add_argument("--json", action="store_true", help="Print artifact JSON")
     plan_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output plan as JSON",
+        "--out",
+        metavar="PATH",
+        help="Write the plan artifact to PATH for a later apply",
     )
 
-    apply_parser = sub.add_parser("apply", help="Execute a switch plan")
+    apply_parser = sub.add_parser("apply", help="Apply an existing plan artifact")
+    apply_parser.add_argument(
+        "--plan",
+        required=True,
+        metavar="PATH",
+        help="Plan artifact created by the plan command",
+    )
     apply_parser.add_argument(
         "--confirm",
         action="store_true",
-        help="Actually execute switches (default: dry run)",
+        help="Actually execute switches (default is dry run)",
     )
-    apply_parser.add_argument(
-        "--current",
-        action="append",
-        default=[],
-        metavar="SURFACE=ACCOUNT",
-        help="Current account assignment. Can repeat.",
-    )
-    apply_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output result as JSON",
-    )
+    apply_parser.add_argument("--json", action="store_true", help="Print JSON result")
 
     args = parser.parse_args(argv)
     command = args.command or "status"
-
     config_path = Path(args.config)
 
     try:
@@ -102,77 +163,52 @@ def main(argv: list[str] | None = None) -> int:
             print(fd.status())
             return 0
 
-        elif command == "plan":
-            accounts, policy, _ = load_config(config_path)
-            collect_quota(accounts)
+        if command == "plan":
+            fd = FleetDrain(config_path)
+            fd.load()
             current = parse_current_args(args.current)
-            actions = generate_plan(accounts, policy, current)
-
+            artifact = fd.plan_artifact(current)
+            if args.out:
+                write_plan_artifact(artifact, args.out)
             if args.json:
-                print(plan_to_json(actions, accounts))
+                print(json.dumps(artifact, indent=2, sort_keys=True))
             else:
-                print("=== Fleet Drain Plan ===")
-                print()
-                for a in actions:
-                    if a.is_noop:
-                        icon = "✅"
-                    elif a.reason.startswith("BLOCKED"):
-                        icon = "🚫"
-                    else:
-                        icon = "🔄"
-                    print(f"{icon} {a.surface_id}: {a.current_account} → {a.proposed_account}")
-                    print(f"   {a.reason}")
-                print()
-                switches = sum(1 for a in actions if not a.is_noop and not a.reason.startswith("BLOCKED"))
-                blocked = sum(1 for a in actions if a.reason.startswith("BLOCKED"))
-                noop = sum(1 for a in actions if a.is_noop)
-                print(f"Summary: {switches} switches | {blocked} blocked | {noop} no-op")
-
+                _print_plan_text(artifact)
+                if args.out:
+                    print()
+                    print("Wrote plan artifact: %s" % args.out)
             return 0
 
-        elif command == "apply":
-            accounts, policy, _ = load_config(config_path)
-            collect_quota(accounts)
-            current = parse_current_args(args.current)
-            actions = generate_plan(accounts, policy, current)
-
-            if not args.confirm:
-                print("DRY RUN — pass --confirm to execute switches")
+        if command == "apply":
+            if not args.confirm and not args.json:
+                print("DRY RUN - pass --confirm to execute switches")
                 print()
-
-            result = apply_plan(actions, accounts, confirm=args.confirm)
-
+            artifact = load_plan_artifact(args.plan)
+            fd = FleetDrain(config_path)
+            fd.load()
+            result = fd.apply(artifact, confirm=args.confirm)
             if args.json:
-                print(json.dumps(result, indent=2))
+                print(json.dumps(result, indent=2, sort_keys=True))
             else:
-                print("=== Apply Result ===")
-                print()
-                print(f"Applied: {result['applied_count']} | Blocked: {result['blocked_count']} | No-op: {result['noop_count']}")
-                if result["applied"]:
-                    print("\nApplied switches:")
-                    for a in result["applied"]:
-                        print(f"  ✅ {a['surface_id']}: {a['current_account']} → {a['proposed_account']}")
-                        if "exec_result" in a:
-                            er = a["exec_result"]
-                            print(f"     {'OK' if er.get('ok') else 'FAILED'}: {er.get('stdout', er.get('error', ''))}")
-                if result["blocked"]:
-                    print("\nBlocked:")
-                    for b in result["blocked"]:
-                        reason = b.get("block_reason", "unknown")
-                        print(f"  🚫 {b['surface_id']}: {b.get('current_account', '?')} → {b.get('proposed_account', '?')} ({reason})")
-
+                _print_apply_result(result)
+            if args.confirm and (
+                result.get("failed_count", 0) or result.get("blocked_count", 0)
+            ):
+                return 4
             return 0
 
-        else:
-            parser.print_help()
-            return 1
+        parser.print_help()
+        return 1
 
-    except FileNotFoundError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        print(f"Hint: copy config/accounts.example.yaml to config/accounts.yaml", file=sys.stderr)
+    except FileNotFoundError as exc:
+        print("ERROR: %s" % exc, file=sys.stderr)
+        print("Hint: copy config/accounts.example.yaml to config/accounts.yaml", file=sys.stderr)
         return 2
-    except Exception as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+    except PlanValidationError as exc:
+        print("ERROR: %s" % exc, file=sys.stderr)
+        return 4
+    except Exception as exc:
+        print("ERROR: %s" % exc, file=sys.stderr)
         return 3
 
 

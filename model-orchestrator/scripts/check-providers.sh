@@ -24,12 +24,16 @@ else
 fi
 
 # Test Gemini Flash 3
-GEMINI_KEY="${GEMINI_API_KEY:-AIzaSyAmf0mo2nnrwvV5JLVSrFR4MVrRHSHvf-g}"
-GEMINI_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time $TIMEOUT \
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=$GEMINI_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"contents":[{"parts":[{"text":"ping"}]}]}' 2>/dev/null || echo "000")
-[[ "$GEMINI_CODE" == "200" ]] && GEMINI_S="up" || { [[ "$GEMINI_CODE" == "429" ]] && GEMINI_S="rate_limited" || GEMINI_S="down"; }
+GEMINI_KEY="${GEMINI_API_KEY:-}"
+if [[ -n "$GEMINI_KEY" ]]; then
+  GEMINI_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time $TIMEOUT \
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=$GEMINI_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"contents":[{"parts":[{"text":"ping"}]}]}' 2>/dev/null || echo "000")
+  [[ "$GEMINI_CODE" == "200" ]] && GEMINI_S="up" || { [[ "$GEMINI_CODE" == "429" ]] && GEMINI_S="rate_limited" || GEMINI_S="down"; }
+else
+  GEMINI_S="no_key"
+fi
 
 # Test GLM (Z.ai) — use quota scraper if Camofox available, else API ping
 GLM_QUOTA_FILE="$STATE_DIR/glm-quota.json"
