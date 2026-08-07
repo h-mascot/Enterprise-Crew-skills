@@ -57,10 +57,14 @@ check_providers() {
   
   # Test Gemini Flash 3
   echo -n "Gemini Flash 3... "
-  GEMINI_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time $TIMEOUT \
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${GEMINI_API_KEY:-AIzaSyAmf0mo2nnrwvV5JLVSrFR4MVrRHSHvf-g}" \
-    -H "Content-Type: application/json" \
-    -d '{"contents":[{"parts":[{"text":"ping"}]}]}' 2>/dev/null || echo "000")
+  if [[ -z "${GEMINI_API_KEY:-}" ]]; then
+    echo "NO KEY"
+    results+=("gemini-flash:no_key")
+  else
+    GEMINI_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time $TIMEOUT \
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${GEMINI_API_KEY}" \
+      -H "Content-Type: application/json" \
+      -d '{"contents":[{"parts":[{"text":"ping"}]}]}' 2>/dev/null || echo "000")
   if [[ "$GEMINI_CODE" == "200" ]]; then
     echo "UP"
     results+=("gemini-flash:up")
@@ -70,6 +74,7 @@ check_providers() {
   else
     echo "DOWN ($GEMINI_CODE)"
     results+=("gemini-flash:down:$GEMINI_CODE")
+  fi
   fi
   
   # Test Kimi

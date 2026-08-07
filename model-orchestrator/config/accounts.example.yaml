@@ -1,0 +1,67 @@
+# Example account configuration for fleet-wide Codex account drain.
+#
+# Copy to accounts.yaml and fill in real account identity values. The real
+# accounts.yaml is git-ignored. Do not store tokens here.
+#
+# Each account has a protected auth source per surface/account. The active
+# auth destination is the Codex path currently read by the CLI on that host.
+# The drain switch copies a protected source into the active destination only
+# after verifying the active destination matches the declared current account.
+
+current_assignments:
+  enterprise:geordi: luna
+  mascotm3:geordi: luna
+
+accounts:
+  - name: luna
+    email: luna@example.invalid
+    priority: 1
+    quota_source: camofox
+    quota_file: state/openai-codex-quota-luna.json
+    surfaces:
+      - host: enterprise
+        agent: geordi
+        ssh_target: enterprise@100.104.229.62
+        codex_cli_path: ~/.local/bin/codex
+        active_auth_path: ~/.codex/auth.json
+        auth_source_path: ~/.codex/accounts/luna/auth.json
+      - host: mascotm3
+        agent: geordi
+        ssh_target: henrymascot@100.86.150.96
+        codex_cli_path: ~/.local/bin/codex
+        active_auth_path: ~/.codex/auth.json
+        auth_source_path: ~/.codex/accounts/luna/auth.json
+
+  - name: herald
+    email: herald@example.invalid
+    priority: 2
+    quota_source: camofox
+    quota_file: state/openai-codex-quota-herald.json
+    surfaces:
+      - host: enterprise
+        agent: geordi
+        ssh_target: enterprise@100.104.229.62
+        codex_cli_path: ~/.local/bin/codex
+        active_auth_path: ~/.codex/auth.json
+        auth_source_path: ~/.codex/accounts/herald/auth.json
+      - host: mascotm3
+        agent: geordi
+        ssh_target: henrymascot@100.86.150.96
+        codex_cli_path: ~/.local/bin/codex
+        active_auth_path: ~/.codex/auth.json
+        auth_source_path: ~/.codex/accounts/herald/auth.json
+
+policy:
+  # Switch trigger: a current account below this remaining percentage is
+  # eligible to switch away.
+  min_remaining_pct: 10
+  # Replacement hysteresis: a target account must be at or above this
+  # remaining percentage to receive a switch. Accounts between min and target
+  # are kept if already active but are not selected as replacements.
+  target_remaining_pct: 50
+  # How to rank eligible replacement accounts:
+  #   priority       - lower priority number first
+  #   most_remaining - highest effective remaining percentage first
+  #   round_robin    - usable accounts in config order
+  drain_order: priority
+  dry_run_default: true

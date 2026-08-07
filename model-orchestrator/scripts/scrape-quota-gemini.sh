@@ -2,7 +2,7 @@
 # scrape-quota-gemini.sh — Scrape Gemini API rate limits from aistudio.google.com
 #
 # WORKFLOW:
-#   1. Google session already exists (henry@curacel.ai)
+#   1. Google session already exists (${GOOGLE_LOGIN_EMAIL:-operator@example.com})
 #   2. Navigate to aistudio.google.com/rate-limit?timeRange=last-28-days
 #   3. Accept cookies if prompted
 #   4. Toggle "All models" view
@@ -12,12 +12,12 @@ set -uo pipefail
 
 CAMOFOX_URL="${CAMOFOX_URL:-http://localhost:9377}"
 API_KEY="${CAMOFOX_API_KEY:-$(grep CAMOFOX_API_KEY ~/clawd/secrets/camofox.env 2>/dev/null | cut -d= -f2)}"
-USER_ID="ada"
+CAMOFOX_USER_ID="${CAMOFOX_USER_ID:-operator}"
 SESSION_KEY="gemini-quota"
 STATE_DIR="$(cd "$(dirname "$0")" && pwd)/../state"
 QUOTA_FILE="$STATE_DIR/gemini-quota.json"
 NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-GOOGLE_PASS="C3.Sanyangsecure"
+GOOGLE_PASS="${GOOGLE_PASS:-}"
 SNAP_FILE="/tmp/gemini-snap-$$.txt"
 
 H=(-H "x-api-key: $API_KEY")
@@ -26,7 +26,7 @@ J=(-H "Content-Type: application/json")
 cf() { curl -sf "$@"; }
 
 cleanup_tab() {
-  [[ -n "${1:-}" ]] && cf -X DELETE "${CAMOFOX_URL}/tabs/${1}?userId=${USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" >/dev/null 2>&1 || true
+  [[ -n "${1:-}" ]] && cf -X DELETE "${CAMOFOX_URL}/tabs/${1}?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" >/dev/null 2>&1 || true
 }
 
 cleanup() { rm -f "$SNAP_FILE"; cleanup_tab "${TAB:-}"; }
@@ -38,28 +38,28 @@ err() {
 }
 
 snap() {
-  cf "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" \
+  cf "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" \
     | python3 -c "import json,sys; print(json.load(sys.stdin).get('snapshot',''))" 2>/dev/null
 }
 
 nav() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/navigate" "${J[@]}" "${H[@]}" \
-    -d "{\"url\":\"$1\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"url\":\"$1\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 click_ref() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/click" "${J[@]}" "${H[@]}" \
-    -d "{\"ref\":\"$1\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"ref\":\"$1\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 type_ref() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/type" "${J[@]}" "${H[@]}" \
-    -d "{\"ref\":\"$1\",\"text\":\"$2\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"ref\":\"$1\",\"text\":\"$2\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 press_key() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/press" "${J[@]}" "${H[@]}" \
-    -d "{\"key\":\"$1\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"key\":\"$1\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 # Check Camofox
@@ -67,7 +67,7 @@ cf --max-time 5 "$CAMOFOX_URL/health" "${H[@]}" >/dev/null 2>&1 || err "camofox_
 
 # --- Create tab ---
 TAB=$(cf -X POST "$CAMOFOX_URL/tabs" "${J[@]}" "${H[@]}" \
-  -d "{\"url\":\"https://aistudio.google.com/rate-limit?timeRange=last-28-days\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
+  -d "{\"url\":\"https://aistudio.google.com/rate-limit?timeRange=last-28-days\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
   | python3 -c "import json,sys; print(json.load(sys.stdin).get('tabId',''))" 2>/dev/null)
 [[ -n "$TAB" ]] || err "tab_create_failed"
 sleep 6
@@ -90,12 +90,13 @@ if echo "$SNAP_TEXT" | grep -q "Sign in\|Create account" && ! echo "$SNAP_TEXT" 
   SNAP_TEXT=$(snap)
 
   if echo "$SNAP_TEXT" | grep -q "Email or phone"; then
-    type_ref "e1" "henry@curacel.ai"
+    type_ref "e1" "${GOOGLE_LOGIN_EMAIL:-operator@example.com}"
     sleep 1
     press_key "Enter"
     sleep 5
     SNAP_TEXT=$(snap)
     if echo "$SNAP_TEXT" | grep -q "Enter your password"; then
+      [[ -n "$GOOGLE_PASS" ]] || err "google_password_required_or_login_manually"
       type_ref "e2" "$GOOGLE_PASS"
       sleep 1
       press_key "Enter"
@@ -139,7 +140,7 @@ echo "$SNAP_TEXT" > "$SNAP_FILE"
 
 # --- Parse ---
 python3 - "$SNAP_FILE" "$NOW_ISO" "$QUOTA_FILE" << 'PYEOF'
-import json, re, sys
+import json, os, re, sys
 
 snap_file, now_iso, quota_file = sys.argv[1], sys.argv[2], sys.argv[3]
 snap = open(snap_file).read()
@@ -205,7 +206,7 @@ result = {
     "provider": "gemini",
     "tier": tier,
     "project": project,
-    "account": "henry@curacel.ai",
+    "account": os.environ.get("GOOGLE_LOGIN_EMAIL", "operator@example.com"),
     "dashboard_url": "https://aistudio.google.com/rate-limit?timeRange=last-28-days",
     "models": models,
     "model_count": len(models),
