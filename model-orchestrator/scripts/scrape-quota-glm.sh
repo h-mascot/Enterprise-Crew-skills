@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # scrape-quota-glm.sh — Scrape GLM/Z.ai quota from dashboard via Camofox browser
 # Outputs JSON with 5h quota %, web search quota %, total tokens, plan info
-# Requires: Camofox running on localhost:9377, authenticated session (ada/glm-quota)
+# Requires: Camofox running on localhost:9377, authenticated session (operator/glm-quota)
 set -uo pipefail
 
 CAMOFOX_URL="${CAMOFOX_URL:-http://localhost:9377}"
 API_KEY="${CAMOFOX_API_KEY:-}"
-USER_ID="ada"
+CAMOFOX_USER_ID="${CAMOFOX_USER_ID:-operator}"
 SESSION_KEY="glm-quota"
 STATE_DIR="$(cd "$(dirname "$0")" && pwd)/../state"
 QUOTA_FILE="$STATE_DIR/glm-quota.json"
@@ -30,17 +30,17 @@ curl -sf --max-time 5 "$CAMOFOX_URL/health" -H "x-api-key: $API_KEY" >/dev/null 
 TAB_ID=$(curl -sf -X POST "$CAMOFOX_URL/tabs" \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
-  -d "{\"url\":\"https://z.ai/manage-apikey/subscription?tab=usage\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
+  -d "{\"url\":\"https://z.ai/manage-apikey/subscription?tab=usage\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
   | python3 -c "import json,sys; print(json.load(sys.stdin)['tabId'])" 2>/dev/null) || err "tab_create_failed"
 
 sleep 6
 
 # Get snapshot
-SNAPSHOT=$(curl -s --max-time 15 "${CAMOFOX_URL}/tabs/${TAB_ID}/snapshot?userId=${USER_ID}&sessionKey=${SESSION_KEY}" \
+SNAPSHOT=$(curl -s --max-time 15 "${CAMOFOX_URL}/tabs/${TAB_ID}/snapshot?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" \
   -H "x-api-key: $API_KEY" 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('snapshot',''))" 2>/dev/null)
 
 # Close tab
-curl -s -X DELETE "${CAMOFOX_URL}/tabs/${TAB_ID}?userId=${USER_ID}&sessionKey=${SESSION_KEY}" \
+curl -s -X DELETE "${CAMOFOX_URL}/tabs/${TAB_ID}?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" \
   -H "x-api-key: $API_KEY" >/dev/null 2>&1
 
 [[ -n "$SNAPSHOT" ]] || err "snapshot_empty"
@@ -121,7 +121,7 @@ result = {
     "last_updated": last_updated,
     "auto_renew": auto_renew,
     "login": "${GOOGLE_EMAIL:-} (Google OAuth)",
-    "camofox_session": "userId=ada, sessionKey=glm-quota",
+    "camofox_session": f"userId={os.environ.get(\"CAMOFOX_USER_ID\", \"operator\")}, sessionKey=glm-quota",
     "dashboard_url": "https://z.ai/manage-apikey/subscription",
     "status": status,
     "checked_at": now_iso

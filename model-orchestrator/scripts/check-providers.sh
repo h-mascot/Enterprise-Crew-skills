@@ -261,13 +261,17 @@ elif [[ "$GEMINI_S" == "up" ]]; then T3="google/gemini-3-flash-preview"
 else T3="NONE"; fi
 
 # Save status + detailed tracking registry
-python3 << PYEOF
+python3 - "${STATE_DIR:-}" "${NOW_ISO:-}" "${AVAILABLE:-}" "${MINIMAX_S:-}" "${GEMINI_S:-}" "${GLM_S:-}" "${KIMI_S:-}" "${ANTHROPIC_S:-}" "${OPENAI_S:-}" "${OPENAI_CODEX_USAGE:-}" "${T1:-}" "${T2:-}" "${T3:-}" "${MINIMAX_CODE:-}" "${GEMINI_CODE:-}" "${GLM_CODE:-}" "${GLM_USAGE:-}" "${KIMI_CODE:-}" "${KIMI_USAGE:-}" "${KIMI_RESET:-}" "${ANTHROPIC_CODE:-}" "${RECENT_COOLDOWN:-}" "${ANTHROPIC_USAGE:-}" "${OPENAI_CODE:-}" "${OPENAI_BALANCE:-}" "${OPENAI_TIER:-}" "${PROVIDER_STATUS:-}" "${PROVIDER_TRACKING:-}" << 'PYEOF'
 import json
+import sys
 from pathlib import Path
 
-state_dir = Path("$STATE_DIR")
-now_iso = "$NOW_ISO"
-mode = "crisis" if $AVAILABLE <= 2 else "degraded" if $AVAILABLE <= 3 else "healthy"
+(state_dir, now_iso, available, minimax_s, gemini_s, glm_s, kimi_s, anthropic_s, openai_s, openai_codex_usage, t1, t2, t3, minimax_code, gemini_code, glm_code, glm_usage, kimi_code, kimi_usage, kimi_reset, anthropic_code, recent_cooldown, anthropic_usage, openai_code, openai_balance, openai_tier, provider_status, provider_tracking) = sys.argv[1:]
+available = int(available)
+recent_cooldown = int(recent_cooldown or "0")
+
+state_dir = Path(state_dir)
+mode = "crisis" if available <= 2 else "degraded" if available <= 3 else "healthy"
 
 
 def load_json(path):
@@ -326,17 +330,17 @@ def make_provider_entry(name, status, primary_model, tier_hint, quota_file=None,
     return entry
 
 status = {
-    "minimax": "$MINIMAX_S",
-    "gemini_flash": "$GEMINI_S",
-    "glm": "$GLM_S",
-    "kimi": "$KIMI_S",
-    "anthropic": "$ANTHROPIC_S",
-    "openai": "$OPENAI_S",
-    "openai_codex_usage": "$OPENAI_CODEX_USAGE",
-    "available_count": $AVAILABLE,
-    "tier1_model": "$T1",
-    "tier2_model": "$T2",
-    "tier3_model": "$T3",
+    "minimax": minimax_s,
+    "gemini_flash": gemini_s,
+    "glm": glm_s,
+    "kimi": kimi_s,
+    "anthropic": anthropic_s,
+    "openai": openai_s,
+    "openai_codex_usage": openai_codex_usage,
+    "available_count": available,
+    "tier1_model": t1,
+    "tier2_model": t2,
+    "tier3_model": t3,
     "checked_at": now_iso,
     "mode": mode
 }
@@ -345,55 +349,55 @@ tracking = {
     "schema_version": "2026-03-14.provider-tracking.v1",
     "checked_at": now_iso,
     "mode": mode,
-    "available_count": $AVAILABLE,
+    "available_count": available,
     "tier_assignments": {
-        "t1": "$T1",
-        "t2": "$T2",
-        "t3": "$T3",
+        "t1": t1,
+        "t2": t2,
+        "t3": t3,
     },
     "providers": {
         "minimax": make_provider_entry(
-            "minimax", "$MINIMAX_S", "minimax/MiniMax-M2.5", "t1",
+            "minimax", minimax_s, "minimax/MiniMax-M2.5", "t1",
             quota_file=state_dir / "minimax-quota.json",
-            checks={"http_status": "${MINIMAX_CODE:-}", "endpoint": "https://api.minimax.io/anthropic/v1/messages"},
+            checks={"http_status": minimax_code, "endpoint": "https://api.minimax.io/anthropic/v1/messages"},
             usage_summary=None,
         ),
         "gemini_flash": make_provider_entry(
-            "gemini_flash", "$GEMINI_S", "google/gemini-3-flash-preview", "t1_t2",
+            "gemini_flash", gemini_s, "google/gemini-3-flash-preview", "t1_t2",
             quota_file=state_dir / "gemini-quota.json",
-            checks={"http_status": "${GEMINI_CODE:-}", "endpoint": "generativelanguage.googleapis.com"},
+            checks={"http_status": gemini_code, "endpoint": "generativelanguage.googleapis.com"},
             usage_summary=None,
         ),
         "glm": make_provider_entry(
-            "glm", "$GLM_S", "zai/glm-5", "t1_t2",
+            "glm", glm_s, "zai/glm-5", "t1_t2",
             quota_file=state_dir / "glm-quota.json",
-            checks={"http_status": "${GLM_CODE:-}", "quota_pct_used": normalize_pct("$GLM_USAGE")},
-            usage_summary=(f"5h quota: {('$GLM_USAGE').strip()}% used" if "$GLM_USAGE" and "$GLM_USAGE" != "?" else None),
+            checks={"http_status": glm_code, "quota_pct_used": normalize_pct(glm_usage)},
+            usage_summary=(f"5h quota: {glm_usage.strip()}% used" if glm_usage and glm_usage != "?" else None),
         ),
         "kimi": make_provider_entry(
-            "kimi", "$KIMI_S", "kimi-coding/kimi-for-coding", "t1_t2",
+            "kimi", kimi_s, "kimi-coding/kimi-for-coding", "t1_t2",
             quota_file=state_dir / "kimi-quota.json",
-            checks={"http_status": "${KIMI_CODE:-}", "weekly_usage_pct": normalize_pct("$KIMI_USAGE"), "reset_hint": "$KIMI_RESET"},
-            usage_summary=(f"weekly usage: {('$KIMI_USAGE').strip()}%" if "$KIMI_USAGE" and "$KIMI_USAGE" != "?" else None),
+            checks={"http_status": kimi_code, "weekly_usage_pct": normalize_pct(kimi_usage), "reset_hint": kimi_reset},
+            usage_summary=(f"weekly usage: {kimi_usage.strip()}%" if kimi_usage and kimi_usage != "?" else None),
         ),
         "anthropic": make_provider_entry(
-            "anthropic", "$ANTHROPIC_S", "anthropic/claude-opus-4-6", "t3",
+            "anthropic", anthropic_s, "anthropic/claude-opus-4-6", "t3",
             quota_file=state_dir / "anthropic-quota.json",
-            checks={"http_status": "${ANTHROPIC_CODE:-}", "recent_cooldown_hits": ${RECENT_COOLDOWN:-0}},
-            usage_summary=("$ANTHROPIC_USAGE" or None),
+            checks={"http_status": anthropic_code, "recent_cooldown_hits": recent_cooldown},
+            usage_summary=(anthropic_usage or None),
         ),
         "openai": make_provider_entry(
-            "openai", "$OPENAI_S", "openai-codex/gpt-5.4", "t3",
+            "openai", openai_s, "openai-codex/gpt-5.4", "t3",
             quota_file=state_dir / "openai-quota.json",
-            checks={"http_status": "${OPENAI_CODE:-}", "api_balance": "$OPENAI_BALANCE", "usage_tier": "$OPENAI_TIER"},
-            usage_summary=("$OPENAI_CODEX_USAGE" or None),
+            checks={"http_status": openai_code, "api_balance": openai_balance, "usage_tier": openai_tier},
+            usage_summary=(openai_codex_usage or None),
             notes=["Codex quota details mirrored in openai_codex entry"],
         ),
         "openai_codex": make_provider_entry(
-            "openai_codex", "$OPENAI_S", "openai-codex/gpt-5.4", "t3",
+            "openai_codex", openai_s, "openai-codex/gpt-5.4", "t3",
             quota_file=state_dir / "openai-codex-quota.json",
-            checks={"http_status": "${OPENAI_CODE:-}"},
-            usage_summary=("$OPENAI_CODEX_USAGE" or None),
+            checks={"http_status": openai_code},
+            usage_summary=(openai_codex_usage or None),
         ),
         "hunter": {
             "provider": "hunter",
@@ -431,9 +435,9 @@ tracking = {
     },
 }
 
-with open("$PROVIDER_STATUS", "w") as f:
+with open(provider_status, "w") as f:
     json.dump(status, f, indent=2)
-with open("$PROVIDER_TRACKING", "w") as f:
+with open(provider_tracking, "w") as f:
     json.dump(tracking, f, indent=2)
 PYEOF
 

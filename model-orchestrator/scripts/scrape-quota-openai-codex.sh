@@ -15,10 +15,11 @@ set -uo pipefail
 
 CAMOFOX_URL="${CAMOFOX_URL:-http://localhost:9377}"
 API_KEY="${CAMOFOX_API_KEY:-}"
-USER_ID="ada"
-SESSION_KEY="openai-codex-quota"
+CAMOFOX_USER_ID="${CAMOFOX_USER_ID:-operator}"
+CAMOFOX_SESSION_KEY="${CAMOFOX_SESSION_KEY:-openai-codex-quota}"
 STATE_DIR="$(cd "$(dirname "$0")" && pwd)/../state"
-QUOTA_FILE="$STATE_DIR/openai-codex-quota.json"
+CODEX_QUOTA_FILE="${CODEX_QUOTA_FILE:-$STATE_DIR/openai-codex-quota.json}"
+mkdir -p "$(dirname "$CODEX_QUOTA_FILE")"
 NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 GOOGLE_EMAIL="${GOOGLE_EMAIL:-}"
 GOOGLE_PASS="${GOOGLE_PASS:-}"
@@ -29,37 +30,37 @@ J=(-H "Content-Type: application/json")
 cf() { curl -sf "$@"; }
 
 cleanup_tab() {
-  [[ -n "${1:-}" ]] && cf -X DELETE "${CAMOFOX_URL}/tabs/${1}?userId=${USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" >/dev/null 2>&1 || true
+  [[ -n "${1:-}" ]] && cf -X DELETE "${CAMOFOX_URL}/tabs/${1}?userId=${CAMOFOX_USER_ID}&sessionKey=${CAMOFOX_SESSION_KEY}" "${H[@]}" >/dev/null 2>&1 || true
 }
 
 err() {
-  echo "{\"error\":\"$1\",\"checked_at\":\"$NOW_ISO\"}" | tee "$QUOTA_FILE"
+  echo "{\"error\":\"$1\",\"checked_at\":\"$NOW_ISO\"}" | tee "$CODEX_QUOTA_FILE"
   exit 1
 }
 
 snap() {
-  cf "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" \
+  cf "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${CAMOFOX_USER_ID}&sessionKey=${CAMOFOX_SESSION_KEY}" "${H[@]}" \
     | python3 -c "import json,sys; print(json.load(sys.stdin).get('snapshot',''))" 2>/dev/null
 }
 
 nav() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/navigate" "${J[@]}" "${H[@]}" \
-    -d "{\"url\":\"$1\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"url\":\"$1\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$CAMOFOX_SESSION_KEY\"}" >/dev/null
 }
 
 click_ref() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/click" "${J[@]}" "${H[@]}" \
-    -d "{\"ref\":\"$1\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"ref\":\"$1\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$CAMOFOX_SESSION_KEY\"}" >/dev/null
 }
 
 type_ref() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/type" "${J[@]}" "${H[@]}" \
-    -d "{\"ref\":\"$1\",\"text\":\"$2\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"ref\":\"$1\",\"text\":\"$2\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$CAMOFOX_SESSION_KEY\"}" >/dev/null
 }
 
 press_key() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/press" "${J[@]}" "${H[@]}" \
-    -d "{\"key\":\"$1\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"key\":\"$1\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$CAMOFOX_SESSION_KEY\"}" >/dev/null
 }
 
 # Check Camofox
@@ -67,7 +68,7 @@ cf --max-time 5 "$CAMOFOX_URL/health" "${H[@]}" >/dev/null 2>&1 || err "camofox_
 
 # --- Create tab ---
 TAB=$(cf -X POST "$CAMOFOX_URL/tabs" "${J[@]}" "${H[@]}" \
-  -d "{\"url\":\"https://chatgpt.com/codex/settings/usage\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
+  -d "{\"url\":\"https://chatgpt.com/codex/settings/usage\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$CAMOFOX_SESSION_KEY\"}" \
   | python3 -c "import json,sys; print(json.load(sys.stdin).get('tabId',''))" 2>/dev/null)
 [[ -n "$TAB" ]] || err "tab_create_failed"
 sleep 6
@@ -131,12 +132,19 @@ echo "Scraping Codex usage..." >&2
 cleanup_tab "$TAB"
 
 # --- Parse snapshot ---
-python3 << PYEOF
+# Write snapshot text to a temp file to avoid interpolating untrusted page
+# content into a Python heredoc.
+SNAP_TMP="$(mktemp)"
+printf '%s' "$SNAP_TEXT" > "$SNAP_TMP"
+
+python3 - "$NOW_ISO" "$CODEX_QUOTA_FILE" "$SNAP_TMP" << 'PYEOF'
 import json, re, sys
 
-snap = """$(echo "$SNAP_TEXT" | sed "s/\"/\\\\\\\\\\\\&/g")"""
-now_iso = "$NOW_ISO"
-quota_file = "$QUOTA_FILE"
+now_iso = sys.argv[1]
+quota_file = sys.argv[2]
+snap_tmp = sys.argv[3]
+with open(snap_tmp, "r") as _f:
+    snap = _f.read()
 
 # Parse 5 hour usage
 m = re.search(r'5 hour usage limit.*?(\d+)% remaining.*?Resets (.+?)$', snap, re.M | re.S)
@@ -186,4 +194,7 @@ result = {
 
 json.dump(result, open(quota_file, "w"), indent=2)
 print(json.dumps(result, indent=2))
+
+import os
+os.remove(snap_tmp) if os.path.exists(snap_tmp) else None
 PYEOF

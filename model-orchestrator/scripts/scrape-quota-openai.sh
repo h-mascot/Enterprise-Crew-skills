@@ -15,7 +15,7 @@ set -uo pipefail
 
 CAMOFOX_URL="${CAMOFOX_URL:-http://localhost:9377}"
 API_KEY="${CAMOFOX_API_KEY:-}"
-USER_ID="ada"
+CAMOFOX_USER_ID="${CAMOFOX_USER_ID:-operator}"
 SESSION_KEY="openai-quota"
 STATE_DIR="$(cd "$(dirname "$0")" && pwd)/../state"
 QUOTA_FILE="$STATE_DIR/openai-quota.json"
@@ -29,7 +29,7 @@ J=(-H "Content-Type: application/json")
 cf() { curl -sf "$@"; }
 
 cleanup_tab() {
-  [[ -n "${1:-}" ]] && cf -X DELETE "${CAMOFOX_URL}/tabs/${1}?userId=${USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" >/dev/null 2>&1 || true
+  [[ -n "${1:-}" ]] && cf -X DELETE "${CAMOFOX_URL}/tabs/${1}?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" >/dev/null 2>&1 || true
 }
 
 err() {
@@ -38,28 +38,28 @@ err() {
 }
 
 snap() {
-  cf "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" \
+  cf "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" \
     | python3 -c "import json,sys; print(json.load(sys.stdin).get('snapshot',''))" 2>/dev/null
 }
 
 nav() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/navigate" "${J[@]}" "${H[@]}" \
-    -d "{\"url\":\"$1\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"url\":\"$1\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 click_ref() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/click" "${J[@]}" "${H[@]}" \
-    -d "{\"ref\":\"$1\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"ref\":\"$1\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 type_ref() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/type" "${J[@]}" "${H[@]}" \
-    -d "{\"ref\":\"$1\",\"text\":\"$2\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"ref\":\"$1\",\"text\":\"$2\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 press_key() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/press" "${J[@]}" "${H[@]}" \
-    -d "{\"key\":\"$1\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"key\":\"$1\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 # Check Camofox
@@ -67,7 +67,7 @@ cf --max-time 5 "$CAMOFOX_URL/health" "${H[@]}" >/dev/null 2>&1 || err "camofox_
 
 # --- Create tab ---
 TAB=$(cf -X POST "$CAMOFOX_URL/tabs" "${J[@]}" "${H[@]}" \
-  -d "{\"url\":\"https://platform.openai.com/settings/organization/billing\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
+  -d "{\"url\":\"https://platform.openai.com/settings/organization/billing\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
   | python3 -c "import json,sys; print(json.load(sys.stdin).get('tabId',''))" 2>/dev/null)
 [[ -n "$TAB" ]] || err "tab_create_failed"
 sleep 6
@@ -167,30 +167,34 @@ MONTHLY_LIMIT=$(echo "$LIMITS_SNAP" | grep -oP 'each month\. \$[\d,]+\.\d+' | gr
 cleanup_tab "$TAB"
 
 # --- Build JSON ---
-python3 << PYEOF
+python3 - "${NOW_ISO:-}" "${QUOTA_FILE:-}" "${PLAN:-}" "${USAGE_TIER:-}" "${CREDIT_BALANCE:-}" "${CREDIT_TOTAL:-}" "${CREDIT_USED:-}" "${LATEST_EXPIRY:-}" "${AUTO_RECHARGE:-}" "${BUDGET_USED:-}" "${BUDGET_LIMIT:-}" "${MONTHLY_LIMIT:-}" "${PERIOD_SPEND:-}" "${PERIOD:-}" "${TOTAL_TOKENS:-}" "${TOTAL_REQUESTS:-}" "${GOOGLE_EMAIL:-}" << 'PYEOF'
 import json
+import sys
+
+(now_iso, quota_file, plan, usage_tier, credit_balance, credit_total, credit_used, credit_expires, auto_recharge_raw, budget_used, budget_limit, monthly_limit, period_spend, period, total_tokens, total_requests, google_email) = sys.argv[1:]
+auto_recharge = auto_recharge_raw.lower() == "true"
 
 data = {
     "provider": "openai",
     "organization": "Curacel",
-    "plan": "${PLAN}",
-    "usage_tier": int("${USAGE_TIER:-0}" or "0"),
-    "credit_balance": float("${CREDIT_BALANCE:-0}" or "0"),
-    "credit_total": float("${CREDIT_TOTAL:-0}" or "0"),
-    "credit_used": float("${CREDIT_USED:-0}" or "0"),
-    "credit_expires": "${LATEST_EXPIRY}",
-    "auto_recharge": ${AUTO_RECHARGE},
-    "monthly_budget_used": float("${BUDGET_USED:-0}" or "0"),
-    "monthly_budget_limit": float("${BUDGET_LIMIT:-0}" or "0"),
-    "monthly_usage_limit": float("${MONTHLY_LIMIT:-0}" or "0"),
-    "period_spend": float("${PERIOD_SPEND:-0}" or "0"),
-    "period": "${PERIOD}",
-    "total_tokens": int("${TOTAL_TOKENS:-0}" or "0"),
-    "total_requests": int("${TOTAL_REQUESTS:-0}" or "0"),
+    "plan": plan,
+    "usage_tier": int(usage_tier or "0"),
+    "credit_balance": float(credit_balance or "0"),
+    "credit_total": float(credit_total or "0"),
+    "credit_used": float(credit_used or "0"),
+    "credit_expires": credit_expires,
+    "auto_recharge": auto_recharge,
+    "monthly_budget_used": float(budget_used or "0"),
+    "monthly_budget_limit": float(budget_limit or "0"),
+    "monthly_usage_limit": float(monthly_limit or "0"),
+    "period_spend": float(period_spend or "0"),
+    "period": period,
+    "total_tokens": int(total_tokens or "0"),
+    "total_requests": int(total_requests or "0"),
     "currency": "USD",
-    "login": "${GOOGLE_EMAIL:-} (Google OAuth)",
+    "login": f"{google_email} (Google OAuth)",
     "dashboard_url": "https://platform.openai.com/settings/organization/billing",
-    "checked_at": "$NOW_ISO"
+    "checked_at": now_iso
 }
 
 # Determine status
@@ -209,6 +213,6 @@ if balance < 100:
 data["status"] = "warning" if reasons else "healthy"
 data["status_reason"] = ". ".join(reasons) if reasons else f"Tier {data['usage_tier']}, \${balance:,.2f} credits remaining"
 
-json.dump(data, open("$QUOTA_FILE", "w"), indent=2)
+json.dump(data, open(quota_file, "w"), indent=2)
 print(json.dumps(data, indent=2))
 PYEOF
