@@ -171,19 +171,19 @@ class SwitchAction:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SwitchAction":
         return cls(
-            surface_id=str(data.get("surface_id", "")),
-            host=str(data.get("host", "")),
-            agent=str(data.get("agent", "")),
-            current_account=str(data.get("current_account", "")),
-            proposed_account=str(data.get("proposed_account", "")),
-            reason=str(data.get("reason", "")),
-            current_remaining=data.get("current_remaining_pct"),
-            proposed_remaining=data.get("proposed_remaining_pct"),
-            ssh_target=str(data.get("ssh_target", "")),
-            codex_cli_path=str(data.get("codex_cli_path", "")),
-            active_auth_path=str(data.get("active_auth_path", "")),
-            current_auth_source_path=str(data.get("current_auth_source_path", "")),
-            proposed_auth_source_path=str(data.get("proposed_auth_source_path", "")),
+            surface_id=str(data["surface_id"]),
+            host=str(data["host"]),
+            agent=str(data["agent"]),
+            current_account=str(data["current_account"]),
+            proposed_account=str(data["proposed_account"]),
+            reason=str(data["reason"]),
+            current_remaining=data["current_remaining_pct"],
+            proposed_remaining=data["proposed_remaining_pct"],
+            ssh_target=str(data["ssh_target"]),
+            codex_cli_path=str(data["codex_cli_path"]),
+            active_auth_path=str(data["active_auth_path"]),
+            current_auth_source_path=str(data["current_auth_source_path"]),
+            proposed_auth_source_path=str(data["proposed_auth_source_path"]),
         )
 
 
@@ -588,6 +588,17 @@ def generate_plan(
                 )
             )
             continue
+        if current_surface.auth_source_path == candidate_surface.auth_source_path:
+            actions.append(
+                _blocked_action(
+                    sid,
+                    base_surface,
+                    current_name,
+                    "BLOCKED: replacement auth source matches current auth source",
+                    current_surface.auth_source_path,
+                )
+            )
+            continue
         actions.append(
             SwitchAction(
                 surface_id=sid,
@@ -769,11 +780,7 @@ def validate_plan_artifact(
     for raw in actions_raw:
         if not isinstance(raw, dict):
             raise PlanValidationError("plan action must be an object")
-        extra_keys = set(raw) - ACTION_KEYS
-        if extra_keys:
-            raise PlanValidationError(
-                "unknown action fields: %s" % ", ".join(sorted(extra_keys))
-            )
+        _validate_action_v1_fields(raw)
         action = SwitchAction.from_dict(raw)
         if action.surface_id not in surface_index:
             raise PlanValidationError("unknown surface_id in plan: %s" % action.surface_id)
@@ -849,6 +856,15 @@ def _validate_action_matches_config(
         action.proposed_auth_source_path,
         "proposed_auth_source_path",
     )
+    if (
+        not action.is_blocked
+        and not action.is_noop
+        and action.current_auth_source_path == action.proposed_auth_source_path
+    ):
+        raise PlanValidationError(
+            "proposed auth source matches current auth source for %s"
+            % action.surface_id
+        )
 
 
 def _validate_action_auth_source(
@@ -1177,6 +1193,13 @@ def _execute_switch(
                 "stage": "local_validate",
                 "error": "unsafe_or_missing_%s" % field_name,
             }
+    if action.current_auth_source_path == action.proposed_auth_source_path:
+        return {
+            "ok": False,
+            "verified": False,
+            "stage": "local_validate",
+            "error": "same_auth_source_path",
+        }
 
     remote_args = [
         action.current_auth_source_path,
@@ -1318,6 +1341,19 @@ def _validate_plan_v1_top_level_fields(artifact: Dict[str, Any]) -> None:
         if extra:
             parts.append("unknown %s" % ", ".join(sorted(extra)))
         raise PlanValidationError("invalid plan top-level fields: %s" % "; ".join(parts))
+
+
+def _validate_action_v1_fields(action: Dict[str, Any]) -> None:
+    actual = set(action)
+    missing = ACTION_KEYS - actual
+    extra = actual - ACTION_KEYS
+    if missing or extra:
+        parts = []
+        if missing:
+            parts.append("missing %s" % ", ".join(sorted(missing)))
+        if extra:
+            parts.append("unknown %s" % ", ".join(sorted(str(key) for key in extra)))
+        raise PlanValidationError("invalid action fields: %s" % "; ".join(parts))
 
 
 def _validate_current_assignments_snapshot(
