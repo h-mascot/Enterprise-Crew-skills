@@ -145,14 +145,23 @@ else
   OCR_TEXT=""
 fi
 
+# Write OCR text to a temp file so the Python parser reads it safely
+# instead of interpolating untrusted OCR output into a heredoc.
+OCR_TMP="$(mktemp)"
+printf '%s' "$OCR_TEXT" > "$OCR_TMP"
+
 # Parse OCR text or fall back to snapshot accessibility data
-python3 << PYEOF
+# Quoted delimiter 'PYEOF' prevents shell expansion inside the heredoc;
+# all dynamic values are passed as positional arguments.
+python3 - "$NOW_ISO" "$QUOTA_FILE" "$SCREENSHOT" "$OCR_TMP" << 'PYEOF'
 import json, re, sys, os
 
-now_iso = "$NOW_ISO"
-quota_file = "$QUOTA_FILE"
-screenshot = "$SCREENSHOT"
-ocr_text = """$OCR_TEXT"""
+now_iso = sys.argv[1]
+quota_file = sys.argv[2]
+screenshot = sys.argv[3]
+ocr_tmp = sys.argv[4]
+with open(ocr_tmp, "r") as _f:
+    ocr_text = _f.read()
 
 # Try to parse from OCR text
 session_pct = None
@@ -252,6 +261,7 @@ else:
 json.dump(result, open(quota_file, "w"), indent=2)
 print(json.dumps(result, indent=2))
 
-# Cleanup screenshot
+# Cleanup screenshot and OCR temp file
 os.remove(screenshot) if os.path.exists(screenshot) else None
+os.remove(ocr_tmp) if os.path.exists(ocr_tmp) else None
 PYEOF

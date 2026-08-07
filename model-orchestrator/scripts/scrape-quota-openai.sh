@@ -167,30 +167,34 @@ MONTHLY_LIMIT=$(echo "$LIMITS_SNAP" | grep -oP 'each month\. \$[\d,]+\.\d+' | gr
 cleanup_tab "$TAB"
 
 # --- Build JSON ---
-python3 << PYEOF
+python3 - "${NOW_ISO:-}" "${QUOTA_FILE:-}" "${PLAN:-}" "${USAGE_TIER:-}" "${CREDIT_BALANCE:-}" "${CREDIT_TOTAL:-}" "${CREDIT_USED:-}" "${LATEST_EXPIRY:-}" "${AUTO_RECHARGE:-}" "${BUDGET_USED:-}" "${BUDGET_LIMIT:-}" "${MONTHLY_LIMIT:-}" "${PERIOD_SPEND:-}" "${PERIOD:-}" "${TOTAL_TOKENS:-}" "${TOTAL_REQUESTS:-}" "${GOOGLE_EMAIL:-}" << 'PYEOF'
 import json
+import sys
+
+(now_iso, quota_file, plan, usage_tier, credit_balance, credit_total, credit_used, credit_expires, auto_recharge_raw, budget_used, budget_limit, monthly_limit, period_spend, period, total_tokens, total_requests, google_email) = sys.argv[1:]
+auto_recharge = auto_recharge_raw.lower() == "true"
 
 data = {
     "provider": "openai",
     "organization": "Curacel",
-    "plan": "${PLAN}",
-    "usage_tier": int("${USAGE_TIER:-0}" or "0"),
-    "credit_balance": float("${CREDIT_BALANCE:-0}" or "0"),
-    "credit_total": float("${CREDIT_TOTAL:-0}" or "0"),
-    "credit_used": float("${CREDIT_USED:-0}" or "0"),
-    "credit_expires": "${LATEST_EXPIRY}",
-    "auto_recharge": ${AUTO_RECHARGE},
-    "monthly_budget_used": float("${BUDGET_USED:-0}" or "0"),
-    "monthly_budget_limit": float("${BUDGET_LIMIT:-0}" or "0"),
-    "monthly_usage_limit": float("${MONTHLY_LIMIT:-0}" or "0"),
-    "period_spend": float("${PERIOD_SPEND:-0}" or "0"),
-    "period": "${PERIOD}",
-    "total_tokens": int("${TOTAL_TOKENS:-0}" or "0"),
-    "total_requests": int("${TOTAL_REQUESTS:-0}" or "0"),
+    "plan": plan,
+    "usage_tier": int(usage_tier or "0"),
+    "credit_balance": float(credit_balance or "0"),
+    "credit_total": float(credit_total or "0"),
+    "credit_used": float(credit_used or "0"),
+    "credit_expires": credit_expires,
+    "auto_recharge": auto_recharge,
+    "monthly_budget_used": float(budget_used or "0"),
+    "monthly_budget_limit": float(budget_limit or "0"),
+    "monthly_usage_limit": float(monthly_limit or "0"),
+    "period_spend": float(period_spend or "0"),
+    "period": period,
+    "total_tokens": int(total_tokens or "0"),
+    "total_requests": int(total_requests or "0"),
     "currency": "USD",
-    "login": "${GOOGLE_EMAIL:-} (Google OAuth)",
+    "login": f"{google_email} (Google OAuth)",
     "dashboard_url": "https://platform.openai.com/settings/organization/billing",
-    "checked_at": "$NOW_ISO"
+    "checked_at": now_iso
 }
 
 # Determine status
@@ -209,6 +213,6 @@ if balance < 100:
 data["status"] = "warning" if reasons else "healthy"
 data["status_reason"] = ". ".join(reasons) if reasons else f"Tier {data['usage_tier']}, \${balance:,.2f} credits remaining"
 
-json.dump(data, open("$QUOTA_FILE", "w"), indent=2)
+json.dump(data, open(quota_file, "w"), indent=2)
 print(json.dumps(data, indent=2))
 PYEOF

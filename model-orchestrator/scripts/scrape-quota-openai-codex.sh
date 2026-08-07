@@ -132,12 +132,19 @@ echo "Scraping Codex usage..." >&2
 cleanup_tab "$TAB"
 
 # --- Parse snapshot ---
-python3 << PYEOF
+# Write snapshot text to a temp file to avoid interpolating untrusted page
+# content into a Python heredoc.
+SNAP_TMP="$(mktemp)"
+printf '%s' "$SNAP_TEXT" > "$SNAP_TMP"
+
+python3 - "$NOW_ISO" "$CODEX_QUOTA_FILE" "$SNAP_TMP" << 'PYEOF'
 import json, re, sys
 
-snap = """$(echo "$SNAP_TEXT" | sed "s/\"/\\\\\\\\\\\\&/g")"""
-now_iso = "$NOW_ISO"
-quota_file = "$CODEX_QUOTA_FILE"
+now_iso = sys.argv[1]
+quota_file = sys.argv[2]
+snap_tmp = sys.argv[3]
+with open(snap_tmp, "r") as _f:
+    snap = _f.read()
 
 # Parse 5 hour usage
 m = re.search(r'5 hour usage limit.*?(\d+)% remaining.*?Resets (.+?)$', snap, re.M | re.S)
@@ -187,4 +194,7 @@ result = {
 
 json.dump(result, open(quota_file, "w"), indent=2)
 print(json.dumps(result, indent=2))
+
+import os
+os.remove(snap_tmp) if os.path.exists(snap_tmp) else None
 PYEOF

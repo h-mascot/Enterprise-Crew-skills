@@ -109,5 +109,42 @@ class PublicShellSecurityTests(unittest.TestCase):
         self.assertEqual([], findings)
 
 
+    def test_no_unquoted_heredoc_with_shell_var_expansion(self):
+        """No script should embed untrusted shell variables into a Python
+        heredoc via an unquoted PYEOF delimiter.  An unquoted delimiter lets
+        the shell expand $VAR before Python sees the source, so untrusted
+        page/OCR text containing triple-quotes or backslashes can inject
+        arbitrary Python.  All heredocs that embed external data must use
+        a quoted delimiter ('PYEOF') and pass data via sys.argv or files.
+        """
+        findings = []
+        for path in sorted(SCRIPT_DIR.glob("*.sh")):
+            lines = path.read_text().splitlines()
+            rel = path.relative_to(ROOT.parent)
+            for i, line in enumerate(lines):
+                # Unquoted heredoc: python3 << PYEOF (no quotes around delimiter)
+                if re.search(r'<<\s*PYEOF\b', line) and "<< 'PYEOF'" not in line and '<<"PYEOF"' not in line:
+                    findings.append(f"{rel}:{i+1}:unquoted-heredoc-pyeof")
+        self.assertEqual([], findings)
+
+    def test_no_triple_quote_shell_var_in_python_heredoc(self):
+        """No script should embed shell variables inside Python triple-quoted
+        strings within heredocs.  This pattern (var = \"\"\"$SHELL_VAR\"\"\")
+        is an injection vector regardless of delimiter quoting — if the
+        delimiter is unquoted the shell expands the variable and its content
+        can close the triple-quote.  Data should flow through sys.argv or
+        temp files instead.
+        """
+        pattern = re.compile(r'"""(?:\$\{?[A-Z]|`\s*\$)', re.MULTILINE)
+        findings = []
+        for path in sorted(SCRIPT_DIR.glob("*.sh")):
+            text = path.read_text()
+            rel = path.relative_to(ROOT.parent)
+            for m in pattern.finditer(text):
+                line_num = text[:m.start()].count("\n") + 1
+                findings.append(f"{rel}:{line_num}:triple-quote-shell-var")
+        self.assertEqual([], findings)
+
+
 if __name__ == "__main__":
     unittest.main()

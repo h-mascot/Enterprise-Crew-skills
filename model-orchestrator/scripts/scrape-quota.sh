@@ -42,12 +42,12 @@ curl -s --max-time 15 "${CAMOFOX_URL}/tabs/${TAB_ID}/snapshot?userId=${CAMOFOX_U
 curl -s -X DELETE "${CAMOFOX_URL}/tabs/${TAB_ID}?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" -H "x-api-key: $API_KEY" >/dev/null 2>&1
 
 # Parse quota from snapshot file
-python3 << PYEOF
+python3 - "$NOW_ISO" "$QUOTA_FILE" "$TMP_SNAPSHOT" << 'PYEOF'
 import json, sys, re
 
-now_iso = "$NOW_ISO"
-quota_file = "$QUOTA_FILE"
-tmp_file = "$TMP_SNAPSHOT"
+now_iso = sys.argv[1]
+quota_file = sys.argv[2]
+tmp_file = sys.argv[3]
 
 with open(tmp_file) as f:
     data = json.load(f)
