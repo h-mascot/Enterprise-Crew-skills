@@ -1,0 +1,162 @@
+{
+  "schema_version": "2026-08-07.codex-fleet.v1",
+  "state_file": "../state/fleet-state.json",
+  "receipt_dir": "../state/fleet-receipts",
+  "lock_file": "../state/fleet-apply.lock",
+  "policy": {
+    "drain_threshold_percent": 20,
+    "recovery_threshold_percent": 35,
+    "max_status_age_seconds": 900,
+    "allow_unknown_quota": false,
+    "default_action_timeout_seconds": 60,
+    "switch_cooldown_seconds": 600,
+    "alternate_required_confidence": "exact",
+    "alternate_health_allowlist": ["ready", "healthy", "ok"],
+    "desktop_chatgpt_sync": false
+  },
+  "hosts": [
+    {
+      "id": "enterprise-shared-codex-quota",
+      "description": "Shared Enterprise Codex quota source. The optional status_command must emit codex-keyring-compatible JSON with per-alias quotaObservedAt timestamps.",
+      "transport": {
+        "type": "local"
+      },
+      "keyring_binary": "codex-keyring",
+      "status_command": ["python3", "{skill_dir}/scripts/codex-keyring-status.py", "--json"],
+      "agents": [
+        {
+          "id": "book",
+          "description": "Book runs locally against the shared Enterprise quota source.",
+          "transport": {
+            "type": "local"
+          },
+          "drain_command": ["agentctl", "admission", "close", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "resume_command": ["agentctl", "admission", "open", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "fallback_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "anthropic"],
+          "restore_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "codex", "--account", "{active_alias}"]
+        },
+        {
+          "id": "ada",
+          "description": "Remote placeholder. Replace example.invalid outside this public repo.",
+          "transport": {
+            "type": "ssh",
+            "host": "ada.example.invalid",
+            "user": "codex-operator",
+            "port": 22
+          },
+          "drain_command": ["agentctl", "admission", "close", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "resume_command": ["agentctl", "admission", "open", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "fallback_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "anthropic"],
+          "restore_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "codex", "--account", "{active_alias}"]
+        },
+        {
+          "id": "geordi-enterprise",
+          "description": "Geordi Enterprise runs under the shared Enterprise quota source. agentctl is a placeholder adapter contract.",
+          "transport": {
+            "type": "local"
+          },
+          "drain_command": ["agentctl", "admission", "close", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "resume_command": ["agentctl", "admission", "open", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "fallback_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "anthropic"],
+          "restore_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "codex", "--account", "{active_alias}"]
+        },
+        {
+          "id": "spock",
+          "enabled": false,
+          "description": "Present but disabled by default. Enable only after private config confirms this agent consumes the shared Enterprise Codex quota pool.",
+          "transport": {
+            "type": "ssh",
+            "host": "spock.example.invalid",
+            "user": "codex-operator",
+            "port": 22
+          },
+          "drain_command": ["agentctl", "admission", "close", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "resume_command": ["agentctl", "admission", "open", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "fallback_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "anthropic"],
+          "restore_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "codex", "--account", "{active_alias}"]
+        },
+        {
+          "id": "scotty",
+          "enabled": false,
+          "description": "Present but disabled by default. Enable only after private config confirms this agent consumes the shared Enterprise Codex quota pool.",
+          "transport": {
+            "type": "ssh",
+            "host": "scotty.example.invalid",
+            "user": "codex-operator",
+            "port": 22
+          },
+          "drain_command": ["agentctl", "admission", "close", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "resume_command": ["agentctl", "admission", "open", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "fallback_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "anthropic"],
+          "restore_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "codex", "--account", "{active_alias}"]
+        },
+        {
+          "id": "zora",
+          "enabled": false,
+          "description": "Present but disabled by default. Enable only after private config confirms this agent consumes the shared Enterprise Codex quota pool.",
+          "transport": {
+            "type": "ssh",
+            "host": "zora.example.invalid",
+            "user": "codex-operator",
+            "port": 22
+          },
+          "drain_command": ["agentctl", "admission", "close", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "resume_command": ["agentctl", "admission", "open", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "fallback_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "anthropic"],
+          "restore_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "codex", "--account", "{active_alias}"]
+        },
+        {
+          "id": "midas",
+          "enabled": false,
+          "description": "Disabled by default. Opt in only after private route and admission commands are reviewed.",
+          "transport": {
+            "type": "ssh",
+            "host": "midas.example.invalid",
+            "user": "codex-operator",
+            "port": 22
+          },
+          "drain_command": ["agentctl", "admission", "close", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "resume_command": ["agentctl", "admission", "open", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "fallback_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "anthropic"],
+          "restore_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "codex", "--account", "{active_alias}"]
+        },
+        {
+          "id": "entitybuilder",
+          "enabled": false,
+          "description": "Disabled by default. Enable only after private quota-pool and routing validation confirms this agent belongs in the shared Enterprise Codex drain policy.",
+          "transport": {
+            "type": "ssh",
+            "host": "entitybuilder.example.invalid",
+            "user": "codex-operator",
+            "port": 22
+          },
+          "drain_command": ["agentctl", "admission", "close", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "resume_command": ["agentctl", "admission", "open", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "fallback_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "anthropic"],
+          "restore_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "codex", "--account", "{active_alias}"]
+        }
+      ]
+    },
+    {
+      "id": "geordi-mascotm3-codex",
+      "description": "Real Geordi MascotM3 Codex surface placeholder. Replace example.invalid outside this public repo.",
+      "transport": {
+        "type": "ssh",
+        "host": "geordi-mascotm3.example.invalid",
+        "user": "codex-operator",
+        "port": 22
+      },
+      "keyring_binary": "codex-keyring",
+      "agents": [
+        {
+          "id": "geordi-mascotm3",
+          "description": "Geordi MascotM3 Codex-facing agent. agentctl is a placeholder adapter contract.",
+          "drain_command": ["agentctl", "admission", "close", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "resume_command": ["agentctl", "admission", "open", "--agent", "{agent_id}", "--host", "{host_id}"],
+          "fallback_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "anthropic"],
+          "restore_command": ["agentctl", "route", "--agent", "{agent_id}", "--host", "{host_id}", "--provider", "codex", "--account", "{active_alias}"]
+        }
+      ]
+    }
+  ]
+}

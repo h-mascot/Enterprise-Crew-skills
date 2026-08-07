@@ -2,7 +2,7 @@
 # scrape-quota-anthropic.sh — Scrape Anthropic (Claude Max) usage from claude.ai
 #
 # WORKFLOW:
-#   1. Login to Google (accounts.google.com) with ${GOOGLE_LOGIN_EMAIL:-operator@example.com}
+#   1. Login to Google (accounts.google.com) with $GOOGLE_EMAIL
 #   2. Navigate to claude.ai (auto-login via Google session)
 #   3. Navigate to claude.ai/settings/usage
 #   4. Scrape plan limits, extra usage, balance
@@ -16,16 +16,17 @@
 set -uo pipefail
 
 CAMOFOX_URL="${CAMOFOX_URL:-http://localhost:9377}"
-API_KEY="${CAMOFOX_API_KEY:-$(grep CAMOFOX_API_KEY ~/clawd/secrets/camofox.env 2>/dev/null | cut -d= -f2)}"
-CAMOFOX_USER_ID="${CAMOFOX_USER_ID:-operator}"
+API_KEY="${CAMOFOX_API_KEY:-}"
+USER_ID="ada"
 SESSION_KEY="anthropic-quota"
 STATE_DIR="$(cd "$(dirname "$0")" && pwd)/../state"
 QUOTA_FILE="$STATE_DIR/anthropic-quota.json"
 NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+GOOGLE_EMAIL="${GOOGLE_EMAIL:-}"
 GOOGLE_PASS="${GOOGLE_PASS:-}"
 
 cleanup_tab() {
-  [[ -n "${1:-}" ]] && curl -sf -X DELETE "${CAMOFOX_URL}/tabs/${1}?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" \
+  [[ -n "${1:-}" ]] && curl -sf -X DELETE "${CAMOFOX_URL}/tabs/${1}?userId=${USER_ID}&sessionKey=${SESSION_KEY}" \
     -H "x-api-key: $API_KEY" >/dev/null 2>&1 || true
 }
 
@@ -41,14 +42,14 @@ curl -sf --max-time 5 "$CAMOFOX_URL/health" -H "x-api-key: $API_KEY" >/dev/null 
 TAB=$(curl -sf -X POST "$CAMOFOX_URL/tabs" \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
-  -d "{\"url\":\"https://accounts.google.com/signin\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
+  -d "{\"url\":\"https://accounts.google.com/signin\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
   | python3 -c "import json,sys; print(json.load(sys.stdin).get('tabId',''))" 2>/dev/null)
 [[ -n "$TAB" ]] || err "tab_create_failed"
 
 sleep 5
 
 # Check if already logged into Google
-SNAP=$(curl -s "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" \
+SNAP=$(curl -s "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${USER_ID}&sessionKey=${SESSION_KEY}" \
   -H "x-api-key: $API_KEY" | python3 -c "import json,sys; print(json.load(sys.stdin).get('snapshot',''))" 2>/dev/null)
 
 if echo "$SNAP" | grep -q "myaccount.google.com\|Google Account"; then
@@ -59,35 +60,34 @@ elif echo "$SNAP" | grep -q "Email or phone"; then
   curl -sf -X POST "${CAMOFOX_URL}/tabs/${TAB}/type" \
     -H "Content-Type: application/json" \
     -H "x-api-key: $API_KEY" \
-    -d "{\"ref\":\"e1\",\"text\":\"${GOOGLE_LOGIN_EMAIL:-operator@example.com}\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"ref\":\"e1\",\"text\":\"${GOOGLE_EMAIL:-}\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
   sleep 1
   # Click Next
   curl -sf -X POST "${CAMOFOX_URL}/tabs/${TAB}/click" \
     -H "Content-Type: application/json" \
     -H "x-api-key: $API_KEY" \
-    -d "{\"ref\":\"e4\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"ref\":\"e4\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
   sleep 5
 
   # Check for password page
-  SNAP2=$(curl -s "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" \
+  SNAP2=$(curl -s "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${USER_ID}&sessionKey=${SESSION_KEY}" \
     -H "x-api-key: $API_KEY" | python3 -c "import json,sys; print(json.load(sys.stdin).get('snapshot',''))" 2>/dev/null)
 
   if echo "$SNAP2" | grep -q "Enter your password"; then
-    [[ -n "$GOOGLE_PASS" ]] || err "google_password_required_or_login_manually"
     # Type password
     curl -sf -X POST "${CAMOFOX_URL}/tabs/${TAB}/type" \
       -H "Content-Type: application/json" \
       -H "x-api-key: $API_KEY" \
-      -d "{\"ref\":\"e2\",\"text\":\"${GOOGLE_PASS}\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+      -d "{\"ref\":\"e2\",\"text\":\"${GOOGLE_PASS}\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
     sleep 1
     curl -sf -X POST "${CAMOFOX_URL}/tabs/${TAB}/click" \
       -H "Content-Type: application/json" \
       -H "x-api-key: $API_KEY" \
-      -d "{\"ref\":\"e4\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+      -d "{\"ref\":\"e4\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
     sleep 8
 
     # Check if 2FA is needed
-    SNAP3=$(curl -s "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" \
+    SNAP3=$(curl -s "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${USER_ID}&sessionKey=${SESSION_KEY}" \
       -H "x-api-key: $API_KEY" | python3 -c "import json,sys; print(json.load(sys.stdin).get('snapshot',''))" 2>/dev/null)
     if echo "$SNAP3" | grep -qi "2-step\|verify\|confirm.*identity"; then
       cleanup_tab "$TAB"
@@ -103,11 +103,11 @@ fi
 curl -sf -X POST "${CAMOFOX_URL}/tabs/${TAB}/navigate" \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
-  -d "{\"url\":\"https://claude.ai/settings/usage\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+  -d "{\"url\":\"https://claude.ai/settings/usage\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 sleep 6
 
 # Check if we're logged into Claude
-URL=$(curl -s "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" \
+URL=$(curl -s "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${USER_ID}&sessionKey=${SESSION_KEY}" \
   -H "x-api-key: $API_KEY" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('url',''))" 2>/dev/null)
 
 if echo "$URL" | grep -q "login"; then
@@ -116,20 +116,20 @@ if echo "$URL" | grep -q "login"; then
   curl -sf -X POST "${CAMOFOX_URL}/tabs/${TAB}/click" \
     -H "Content-Type: application/json" \
     -H "x-api-key: $API_KEY" \
-    -d "{\"ref\":\"e10\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"ref\":\"e10\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
   sleep 8
 
   # Re-navigate to usage
   curl -sf -X POST "${CAMOFOX_URL}/tabs/${TAB}/navigate" \
     -H "Content-Type: application/json" \
     -H "x-api-key: $API_KEY" \
-    -d "{\"url\":\"https://claude.ai/settings/usage\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"url\":\"https://claude.ai/settings/usage\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
   sleep 5
 fi
 
 # --- Step 3: Take screenshot and OCR the usage data ---
 SCREENSHOT="/tmp/anthropic-usage-$$.png"
-curl -sf "${CAMOFOX_URL}/tabs/${TAB}/screenshot?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}&format=png&fullPage=true" \
+curl -sf "${CAMOFOX_URL}/tabs/${TAB}/screenshot?userId=${USER_ID}&sessionKey=${SESSION_KEY}&format=png&fullPage=true" \
   -H "x-api-key: $API_KEY" -o "$SCREENSHOT" 2>/dev/null
 
 cleanup_tab "$TAB"
@@ -218,7 +218,7 @@ if session_pct is not None or weekly_all_pct is not None:
     result = {
         "provider": "anthropic",
         "plan": "Max",
-        "organization": "${ACCOUNT_ORG_NAME:-your-organization}",
+        "organization": "Curacel",
         "session_usage_pct": session_pct,
         "weekly_all_models_pct": weekly_all_pct,
         "weekly_sonnet_only_pct": weekly_sonnet_pct,
@@ -228,7 +228,7 @@ if session_pct is not None or weekly_all_pct is not None:
         "current_balance": balance,
         "auto_reload": auto_reload,
         "currency": "GBP",
-        "login": "${GOOGLE_LOGIN_EMAIL:-operator@example.com} (Google OAuth via claude.ai)",
+        "login": "${GOOGLE_EMAIL:-} (Google OAuth via claude.ai)",
         "dashboard_url": "https://claude.ai/settings/usage",
         "status": status,
         "status_reason": reason,

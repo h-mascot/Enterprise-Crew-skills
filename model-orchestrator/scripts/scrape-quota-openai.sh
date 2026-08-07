@@ -2,7 +2,7 @@
 # scrape-quota-openai.sh — Scrape OpenAI billing/usage from platform.openai.com
 #
 # WORKFLOW:
-#   1. Login to Google (accounts.google.com) with ${GOOGLE_LOGIN_EMAIL:-operator@example.com}
+#   1. Login to Google (accounts.google.com) with $GOOGLE_EMAIL
 #   2. Navigate to platform.openai.com → Continue with Google
 #   3. Scrape billing overview (credit balance, auto-recharge)
 #   4. Scrape credit grants (expiry dates)
@@ -14,12 +14,13 @@
 set -uo pipefail
 
 CAMOFOX_URL="${CAMOFOX_URL:-http://localhost:9377}"
-API_KEY="${CAMOFOX_API_KEY:-$(grep CAMOFOX_API_KEY ~/clawd/secrets/camofox.env 2>/dev/null | cut -d= -f2)}"
-CAMOFOX_USER_ID="${CAMOFOX_USER_ID:-operator}"
+API_KEY="${CAMOFOX_API_KEY:-}"
+USER_ID="ada"
 SESSION_KEY="openai-quota"
 STATE_DIR="$(cd "$(dirname "$0")" && pwd)/../state"
 QUOTA_FILE="$STATE_DIR/openai-quota.json"
 NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+GOOGLE_EMAIL="${GOOGLE_EMAIL:-}"
 GOOGLE_PASS="${GOOGLE_PASS:-}"
 
 H=(-H "x-api-key: $API_KEY")
@@ -28,7 +29,7 @@ J=(-H "Content-Type: application/json")
 cf() { curl -sf "$@"; }
 
 cleanup_tab() {
-  [[ -n "${1:-}" ]] && cf -X DELETE "${CAMOFOX_URL}/tabs/${1}?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" >/dev/null 2>&1 || true
+  [[ -n "${1:-}" ]] && cf -X DELETE "${CAMOFOX_URL}/tabs/${1}?userId=${USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" >/dev/null 2>&1 || true
 }
 
 err() {
@@ -37,28 +38,28 @@ err() {
 }
 
 snap() {
-  cf "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" \
+  cf "${CAMOFOX_URL}/tabs/${TAB}/snapshot?userId=${USER_ID}&sessionKey=${SESSION_KEY}" "${H[@]}" \
     | python3 -c "import json,sys; print(json.load(sys.stdin).get('snapshot',''))" 2>/dev/null
 }
 
 nav() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/navigate" "${J[@]}" "${H[@]}" \
-    -d "{\"url\":\"$1\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"url\":\"$1\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 click_ref() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/click" "${J[@]}" "${H[@]}" \
-    -d "{\"ref\":\"$1\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"ref\":\"$1\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 type_ref() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/type" "${J[@]}" "${H[@]}" \
-    -d "{\"ref\":\"$1\",\"text\":\"$2\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"ref\":\"$1\",\"text\":\"$2\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 press_key() {
   cf -X POST "${CAMOFOX_URL}/tabs/${TAB}/press" "${J[@]}" "${H[@]}" \
-    -d "{\"key\":\"$1\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
+    -d "{\"key\":\"$1\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" >/dev/null
 }
 
 # Check Camofox
@@ -66,7 +67,7 @@ cf --max-time 5 "$CAMOFOX_URL/health" "${H[@]}" >/dev/null 2>&1 || err "camofox_
 
 # --- Create tab ---
 TAB=$(cf -X POST "$CAMOFOX_URL/tabs" "${J[@]}" "${H[@]}" \
-  -d "{\"url\":\"https://platform.openai.com/settings/organization/billing\",\"userId\":\"$CAMOFOX_USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
+  -d "{\"url\":\"https://platform.openai.com/settings/organization/billing\",\"userId\":\"$USER_ID\",\"sessionKey\":\"$SESSION_KEY\"}" \
   | python3 -c "import json,sys; print(json.load(sys.stdin).get('tabId',''))" 2>/dev/null)
 [[ -n "$TAB" ]] || err "tab_create_failed"
 sleep 6
@@ -82,14 +83,13 @@ if echo "$SNAP_TEXT" | grep -q "Log in\|Authentication required"; then
   
   SNAP_TEXT=$(snap)
   if echo "$SNAP_TEXT" | grep -q "Email or phone"; then
-    type_ref "e1" "${GOOGLE_LOGIN_EMAIL:-operator@example.com}"
+    type_ref "e1" "${GOOGLE_EMAIL:-}"
     sleep 1
     press_key "Enter"
     sleep 5
     
     SNAP_TEXT=$(snap)
     if echo "$SNAP_TEXT" | grep -q "Enter your password"; then
-      [[ -n "$GOOGLE_PASS" ]] || err "google_password_required_or_login_manually"
       type_ref "e2" "$GOOGLE_PASS"
       sleep 1
       press_key "Enter"
@@ -172,7 +172,7 @@ import json
 
 data = {
     "provider": "openai",
-    "organization": "${ACCOUNT_ORG_NAME:-your-organization}",
+    "organization": "Curacel",
     "plan": "${PLAN}",
     "usage_tier": int("${USAGE_TIER:-0}" or "0"),
     "credit_balance": float("${CREDIT_BALANCE:-0}" or "0"),
@@ -188,7 +188,7 @@ data = {
     "total_tokens": int("${TOTAL_TOKENS:-0}" or "0"),
     "total_requests": int("${TOTAL_REQUESTS:-0}" or "0"),
     "currency": "USD",
-    "login": "${GOOGLE_LOGIN_EMAIL:-operator@example.com} (Google OAuth)",
+    "login": "${GOOGLE_EMAIL:-} (Google OAuth)",
     "dashboard_url": "https://platform.openai.com/settings/organization/billing",
     "checked_at": "$NOW_ISO"
 }
