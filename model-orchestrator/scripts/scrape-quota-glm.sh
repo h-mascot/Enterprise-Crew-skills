@@ -13,6 +13,7 @@ QUOTA_FILE="$STATE_DIR/glm-quota.json"
 TMP_SNAPSHOT="/tmp/glm-snapshot-$$.txt"
 NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 GOOGLE_EMAIL="${GOOGLE_EMAIL:-}"
+export NOW_ISO QUOTA_FILE TMP_SNAPSHOT
 
 cleanup() { rm -f "$TMP_SNAPSHOT"; }
 trap cleanup EXIT

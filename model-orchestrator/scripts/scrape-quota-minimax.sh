@@ -14,6 +14,7 @@ STATE_DIR="$(cd "$(dirname "$0")" && pwd)/../state"
 QUOTA_FILE="$STATE_DIR/minimax-quota.json"
 TMP_SNAPSHOT="/tmp/minimax-snapshot-$$.txt"
 NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+export TMP_SNAPSHOT
 
 cleanup() { rm -f "$TMP_SNAPSHOT"; }
 trap cleanup EXIT

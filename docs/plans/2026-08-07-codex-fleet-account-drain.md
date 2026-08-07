@@ -39,22 +39,22 @@ Extend `model-orchestrator` from cron-only model balancing into a safe, account-
 - [x] Final parent-review regression tests written before correction for CLI/read-status freshness, deployable sensor behavior, transaction-wide locking, fallback alternate recovery, first-action partial failure, invalid quota percentages, schema validation, receipt naming, and example topology.
 - [x] Optional `status_command` argv contract plus shipped standard-library `scripts/codex-keyring-status.py` sensor for safe per-alias quota metadata enrichment.
 - [x] Documentation covering Book, Ada, `geordi-enterprise`, Spock, Scotty, Zora, Midas, EntityBuilder opt-in, and MascotM3 without committing private host details or credentials.
-- [x] Keep credential-bearing legacy scripts out of this feature diff; patch-level scanning covers both added and deleted lines.
+- [x] Remove credential-bearing defaults from touched legacy shell scripts; regression scanning covers tracked shell sources.
 
 ## Verification
 
 - [x] Failing tests captured before implementation at `/tmp/model-orchestrator-hardening-red.log`.
 - [x] Final correction failing tests captured before implementation at `/tmp/model-orchestrator-final-red.log`.
 - [x] `python3 -m unittest discover -s model-orchestrator/tests -v`
-- [x] No changed shell entrypoint. The fleet CLI is Python-only and intentionally excludes the legacy cron orchestrator from this diff.
+- [x] Python fleet CLI plus `fleet-*` shell dispatch; all touched shell entrypoints pass `bash -n` and secret-default regression scanning.
 - [x] `python3 -m py_compile model-orchestrator/fleet_controller.py model-orchestrator/scripts/fleet.py model-orchestrator/scripts/codex-keyring-status.py`
 - [x] JSON validation plus `fleet_controller.validate_config()` over `model-orchestrator/config/fleet.example.json`
 - [x] CLI and sensor fixture smokes: plan low-account switch, plan no-alternate fallback, lock contention, receipt collision resistance, apply through harmless fixture commands, recovery plan, and safe sensor enrichment.
 - [x] Secret/private-default scan across the branch diff.
 - [x] Generated `__pycache__` and `output` directories removed.
-- [x] Codex autoreview over the final staged implementation; all actionable controller findings fixed. The unrelated legacy cron-script defect remains outside this diff.
+- [x] Codex autoreview over the final implementation; actionable controller and touched-shell findings fixed.
 - [x] Final tests rerun before handoff.
-- [ ] Feature branch pushed and PR opened. Deferred by current instruction: do not commit, push, or open a PR.
+- [x] Feature branch pushed and PR opened: https://github.com/h-mascot/Enterprise-Crew-skills/pull/4.
 
 ## Live rollout boundary
 
