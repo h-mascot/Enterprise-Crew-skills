@@ -37,6 +37,7 @@ SECRET_ENV_FALLBACK = re.compile(
 )
 
 PRIVATE_EMAIL_LITERAL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@(?:curacel\.ai|enterprisecrew\.ai)\b")
+REDACTED_HEADER_VALUE = re.compile(r'(?i)-H\s+["\'](?:x-api-key|authorization):\s*\*\*\*')
 
 
 class PublicShellSecurityTests(unittest.TestCase):
@@ -64,6 +65,8 @@ class PublicShellSecurityTests(unittest.TestCase):
 
                 if PRIVATE_EMAIL_LITERAL.search(line):
                     findings.append(f"{rel}:{line_number}:private-login-email")
+                if REDACTED_HEADER_VALUE.search(line):
+                    findings.append(f"{rel}:{line_number}:redacted-runtime-header")
 
         self.assertEqual([], findings)
 

@@ -42,7 +42,7 @@ check_providers() {
   # Test MiniMax
   echo -n "MiniMax... "
   MINIMAX_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time $TIMEOUT \
-    -H "x-api-key: *** ${MINIMAX_API_KEY:-}" \
+    -H "x-api-key: ${MINIMAX_API_KEY:-}" \
     -H "Content-Type: application/json" \
     -H "anthropic-version: 2023-06-01" \
     -d '{"model":"MiniMax-M2.1","messages":[{"role":"user","content":"ping"}],"max_tokens":5}' \
