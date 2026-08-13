@@ -24,6 +24,11 @@ NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 GOOGLE_EMAIL="${GOOGLE_EMAIL:-}"
 GOOGLE_PASS="${GOOGLE_PASS:-}"
 
+cleanup_sensitive_temp_files() {
+  [[ -n "${SNAP_TMP:-}" ]] && rm -f -- "$SNAP_TMP"
+}
+trap cleanup_sensitive_temp_files EXIT
+
 H=(-H "x-api-key: $API_KEY")
 J=(-H "Content-Type: application/json")
 
@@ -194,7 +199,4 @@ result = {
 
 json.dump(result, open(quota_file, "w"), indent=2)
 print(json.dumps(result, indent=2))
-
-import os
-os.remove(snap_tmp) if os.path.exists(snap_tmp) else None
 PYEOF

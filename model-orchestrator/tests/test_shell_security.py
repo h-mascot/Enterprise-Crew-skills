@@ -108,6 +108,35 @@ class PublicShellSecurityTests(unittest.TestCase):
 
         self.assertEqual([], findings)
 
+    def test_sensitive_browser_temp_files_have_shell_exit_cleanup(self):
+        """Sensitive OCR and browser snapshots must be removed even when the
+        Python parser or quota-file write fails. Cleanup owned only by Python
+        after the happy path is not sufficient.
+        """
+        contracts = {
+            "scrape-quota-anthropic.sh": (
+                'rm -f -- "$SCREENSHOT"',
+                'rm -f -- "$OCR_TMP"',
+                "SCREENSHOT=",
+                "OCR_TMP=",
+            ),
+            "scrape-quota-openai-codex.sh": (
+                'rm -f -- "$SNAP_TMP"',
+                "SNAP_TMP=",
+            ),
+        }
+
+        for filename, required in contracts.items():
+            with self.subTest(filename=filename):
+                script = (SCRIPT_DIR / filename).read_text()
+                self.assertIn("cleanup_sensitive_temp_files()", script)
+                trap = "trap cleanup_sensitive_temp_files EXIT"
+                self.assertIn(trap, script)
+                trap_index = script.index(trap)
+                for snippet in required:
+                    self.assertIn(snippet, script)
+                for assignment in (item for item in required if item.endswith("=")):
+                    self.assertLess(trap_index, script.index(assignment))
 
     def test_no_unquoted_heredoc_with_shell_var_expansion(self):
         """No script should embed untrusted shell variables into a Python
