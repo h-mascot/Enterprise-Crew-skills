@@ -25,6 +25,12 @@ NOW_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 GOOGLE_EMAIL="${GOOGLE_EMAIL:-}"
 GOOGLE_PASS="${GOOGLE_PASS:-}"
 
+cleanup_sensitive_temp_files() {
+  [[ -n "${SCREENSHOT:-}" ]] && rm -f -- "$SCREENSHOT"
+  [[ -n "${OCR_TMP:-}" ]] && rm -f -- "$OCR_TMP"
+}
+trap cleanup_sensitive_temp_files EXIT
+
 cleanup_tab() {
   [[ -n "${1:-}" ]] && curl -sf -X DELETE "${CAMOFOX_URL}/tabs/${1}?userId=${CAMOFOX_USER_ID}&sessionKey=${SESSION_KEY}" \
     -H "x-api-key: $API_KEY" >/dev/null 2>&1 || true
@@ -260,8 +266,4 @@ else:
 
 json.dump(result, open(quota_file, "w"), indent=2)
 print(json.dumps(result, indent=2))
-
-# Cleanup screenshot and OCR temp file
-os.remove(screenshot) if os.path.exists(screenshot) else None
-os.remove(ocr_tmp) if os.path.exists(ocr_tmp) else None
 PYEOF
