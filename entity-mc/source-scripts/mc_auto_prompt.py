@@ -31,12 +31,15 @@ def build_prompt(task, agent, attempt_id, scripts, state, url):
     if not isinstance(metadata,dict):
         metadata = {}
     selection = model_for(task, agent)
-    review = f'bash "{scripts}/mc.sh" review {task_id} "<substantive output with file paths/evidence>"'
+    review = (f'bash "{scripts}/mc.sh" review {task_id} "<substantive output with file paths/evidence>" '
+              '--proof "<inspectable artifact reference>"')
     block = f'bash "{scripts}/mc.sh" block {task_id} "<exact blocker and required next action>"'
     prompt = f'''## CRITICAL — Read this first
 Your final action must close the assigned task through one of these commands:
   {review}
   {block}
+Verify the artifact reference resolves to your completed deliverable and inspect it before submitting review.
+Replace the --proof placeholder with that actual reference; preserve all reviewer and human approval gates.
 MC API: {url}
 Attempt reference: {attempt_id}
 

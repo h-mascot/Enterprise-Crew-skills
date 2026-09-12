@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import socket
 import subprocess
@@ -258,6 +259,17 @@ class AutoPullTests(unittest.TestCase):
         args=json.loads(self.read('launches').splitlines()[0])
         self.assertIn(title,args[args.index('-m')+1])
         self.assertIn('`touch '+str(marker)+'`',args[args.index('-m')+1])
+
+    def test_producer_review_handoffs_include_explicit_verified_proof(self):
+        self.run_pull()
+        args=json.loads(self.read('launches').splitlines()[0])
+        prompt=args[args.index('-m')+1]
+        commands=[shlex.split(line) for line in prompt.splitlines() if 'mc.sh" review 1 ' in line]
+        self.assertEqual(len(commands),2)
+        for command in commands:
+            self.assertEqual(command[-2:],['--proof','<inspectable artifact reference>'])
+        self.assertIn('Verify the artifact reference resolves',prompt)
+
 
     def test_dry_run_existing_tracker_has_no_side_effects(self):
         tracker=self.state/'exec-tracking/task-1.json'
