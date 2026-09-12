@@ -22,29 +22,34 @@ CURRENT_VERSION="$(cat "$ENTITY_MC_STATE_DIR/current-version")"
 
 while IFS= read -r file; do
   [[ -x "$ENTITY_MC_RUNTIME_DIR/$file" ]] || fail "runtime file missing/executable: $file"
-  [[ -e "$ENTITY_MC_TARGET_SCRIPTS_DIR/$file" ]] || fail "wrapper missing: $ENTITY_MC_TARGET_SCRIPTS_DIR/$file"
+  cmp -s "$ENTITY_MC_SOURCE_SCRIPTS_DIR/$file" "$ENTITY_MC_RUNTIME_DIR/$file" || fail "runtime content mismatch: $file"
 done < <(entity_mc_runtime_files)
 
-[[ -d "$ENTITY_MC_CONTEXT_DIR" ]] || fail "context dir missing: $ENTITY_MC_CONTEXT_DIR"
 while IFS= read -r file; do
-  [[ -f "$ENTITY_MC_CONTEXT_DIR/$file" ]] || fail "context file missing: $file"
+  cmp -s "$ENTITY_MC_SOURCE_CONTEXT_DIR/$file" "$ENTITY_MC_RUNTIME_DIR/context/$file" || fail "context content mismatch: $file"
+  cmp -s "$ENTITY_MC_SOURCE_CONTEXT_DIR/$file" "$ENTITY_MC_TARGET_HOME/memory/entity-mc/$file" || fail "installed memory mismatch: $file"
+  [[ "$(readlink "$ENTITY_MC_CONTEXT_DIR/$file")" == "$ENTITY_MC_RELEASE_CONTEXT_DIR/$file" ]] || fail "context link mismatch: $file"
 done < <(entity_mc_context_files)
 
-# Verify memory files were installed
-_mem_dir="$ENTITY_MC_TARGET_HOME/memory/entity-mc"
-[[ -d "$_mem_dir" ]] || fail "memory dir missing: $_mem_dir"
 while IFS= read -r file; do
-  [[ -f "$_mem_dir/$file" ]] || fail "memory file missing: $file"
-done < <(entity_mc_context_files)
-
-# Verify AGENTS.md has the startup read marker
-_agents="$ENTITY_MC_TARGET_HOME/AGENTS.md"
-[[ -f "$_agents" ]] || fail "AGENTS.md missing"
-grep -q 'ENTITY_MC_MEMORY_START' "$_agents" || fail "AGENTS.md missing ENTITY_MC memory marker"
-
-INTAKE_DRY_RUN="$($ENTITY_MC_BASH_BIN "$ENTITY_MC_TARGET_SCRIPTS_DIR/mc-intake.sh" create --title "Entity MC verify dry run" --description "verify" --assignee "$ENTITY_MC_AGENT_NAME" --dry-run 2>/dev/null || true)"
-printf '%s' "$INTAKE_DRY_RUN" | jq -e '.action == "dry_run" and (.payload.metadata | contains("\"intake\":true"))' >/dev/null \
-  || fail "mc-intake dry-run failed"
+  WRAPPER="$ENTITY_MC_TARGET_SCRIPTS_DIR/$file"
+  [[ -x "$WRAPPER" ]] || fail "wrapper missing/executable: $WRAPPER"
+  if [[ "$ENTITY_MC_MODE" == "symlink" ]]; then
+    [[ -L "$WRAPPER" ]] || fail "wrapper is not a symlink: $WRAPPER"
+    EXPECTED_WRAPPER="$ENTITY_MC_STATE_DIR/launchers/$file"
+    [[ "$(readlink "$WRAPPER")" == "$EXPECTED_WRAPPER" ]] || fail "wrapper symlink target mismatch: $file"
+    entity_mc_render_wrapper "$file" | cmp -s - "$EXPECTED_WRAPPER" || fail "launcher content mismatch: $file"
+  else
+    [[ ! -L "$WRAPPER" ]] || fail "copy wrapper is unexpectedly a symlink: $WRAPPER"
+    EXPECTED_WRAPPER="$(mktemp)"
+    entity_mc_render_wrapper "$file" > "$EXPECTED_WRAPPER"
+    if ! cmp -s "$EXPECTED_WRAPPER" "$WRAPPER"; then
+      rm -f "$EXPECTED_WRAPPER"
+      fail "wrapper content mismatch: $file"
+    fi
+    rm -f "$EXPECTED_WRAPPER"
+  fi
+done < <(entity_mc_entrypoints)
 
 if [[ "$ENTITY_MC_INSTALL_CRON" == "true" ]]; then
   CRON_CONTENT="$(crontab -l 2>/dev/null || true)"
@@ -55,23 +60,21 @@ if [[ "$ENTITY_MC_INSTALL_CRON" == "true" ]]; then
   BLOCK_CONTENT="$(printf '%s\n' "$CRON_CONTENT" | awk -v start="# BEGIN ${ENTITY_MC_CRON_TAG}" -v end="# END ${ENTITY_MC_CRON_TAG}" '
     $0==start {inside=1; next}
     $0==end {inside=0; exit}
-    inside {print}
+    inside && $0 !~ /^[[:space:]]*#/ {print}
   ')"
   AUTO_PULL_COUNT="$(printf '%s\n' "$BLOCK_CONTENT" | grep -c 'mc-auto-pull.sh' || true)"
+  REVIEW_PULL_COUNT="$(printf '%s\n' "$BLOCK_CONTENT" | grep -c 'mc-review-pull.sh' || true)"
   STALL_CHECK_COUNT="$(printf '%s\n' "$BLOCK_CONTENT" | grep -c 'mc-stall-check.sh' || true)"
   INTAKE_COUNT="$(printf '%s\n' "$BLOCK_CONTENT" | grep -c 'mc-intake.sh' || true)"
-  if [[ "$ENTITY_MC_ENABLE_AUTO_PULL" == "true" ]]; then
-    [[ "$AUTO_PULL_COUNT" == "1" ]] || fail "expected 1 auto-pull cron entry, got $AUTO_PULL_COUNT"
-  fi
-  if [[ "$ENTITY_MC_ENABLE_STALL_CHECK" == "true" ]]; then
-    [[ "$STALL_CHECK_COUNT" == "1" ]] || fail "expected 1 stall-check cron entry, got $STALL_CHECK_COUNT"
-  fi
-  if [[ "$ENTITY_MC_ENABLE_INTAKE" == "true" ]]; then
-    [[ "$INTAKE_COUNT" == "1" ]] || fail "expected 1 intake cron entry, got $INTAKE_COUNT"
-  fi
+  EXPECTED_AUTO_PULL_COUNT="$([[ "$ENTITY_MC_ENABLE_AUTO_PULL" == "true" ]] && echo 1 || echo 0)"
+  EXPECTED_REVIEW_PULL_COUNT="$([[ "$ENTITY_MC_ENABLE_REVIEW_PULL" == "true" ]] && echo 1 || echo 0)"
+  EXPECTED_STALL_CHECK_COUNT="$([[ "$ENTITY_MC_ENABLE_STALL_CHECK" == "true" ]] && echo 1 || echo 0)"
+  EXPECTED_INTAKE_COUNT="$([[ "$ENTITY_MC_ENABLE_INTAKE" == "true" ]] && echo 1 || echo 0)"
+  [[ "$AUTO_PULL_COUNT" == "$EXPECTED_AUTO_PULL_COUNT" ]] || fail "auto-pull cron count mismatch: expected $EXPECTED_AUTO_PULL_COUNT got $AUTO_PULL_COUNT"
+  [[ "$REVIEW_PULL_COUNT" == "$EXPECTED_REVIEW_PULL_COUNT" ]] || fail "review-pull cron count mismatch: expected $EXPECTED_REVIEW_PULL_COUNT got $REVIEW_PULL_COUNT"
+  [[ "$STALL_CHECK_COUNT" == "$EXPECTED_STALL_CHECK_COUNT" ]] || fail "stall-check cron count mismatch: expected $EXPECTED_STALL_CHECK_COUNT got $STALL_CHECK_COUNT"
+  [[ "$INTAKE_COUNT" == "$EXPECTED_INTAKE_COUNT" ]] || fail "intake cron count mismatch: expected $EXPECTED_INTAKE_COUNT got $INTAKE_COUNT"
 fi
 
-cat <<EOF
-VERIFY_OK
-$(entity_mc_status_json)
-EOF
+printf '%s\n' 'VERIFY_OK'
+entity_mc_status_json

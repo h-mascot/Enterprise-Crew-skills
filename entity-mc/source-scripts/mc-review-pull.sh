@@ -11,4 +11,4 @@ while [ -L "$SCRIPT_SOURCE" ]; do
   esac
 done
 SCRIPT_DIR=$(cd -P -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)
-exec "${ENTITY_MC_PYTHON_BIN:-python3}" -B "$SCRIPT_DIR/mc-health-runtime.py" "$@"
+exec "${ENTITY_MC_PYTHON_BIN:-python3}" -B "$SCRIPT_DIR/mc-review-runtime.py" "$@"

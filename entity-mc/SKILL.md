@@ -50,6 +50,7 @@ Optional:
 - `ENTITY_MC_STATE_DIR`
 - `ENTITY_MC_MODE` (`copy` or `symlink`, default `copy`)
 - `ENTITY_MC_ENABLE_AUTO_PULL` (`true|false`)
+- `ENTITY_MC_ENABLE_REVIEW_PULL` (`true|false`, default `false`; enable after configuring an independent reviewer)
 - `ENTITY_MC_ENABLE_STALL_CHECK` (`true|false`)
 - `ENTITY_MC_ENABLE_INTAKE` (`true|false`, default `false`; enable only after writing a source-specific intake policy)
 - `ENTITY_MC_INTAKE_SCHEDULE`
@@ -58,6 +59,11 @@ Optional:
 - `ENTITY_MC_STALL_CHECK_SCHEDULE`
 - `ENTITY_MC_PROFILE_NAME`
 - `ENTITY_MC_EXTRA_NOTES`
+- `ENTITY_MC_DISPATCH_HOST` (required for dispatch, exact output of `hostname`; `install-auto.sh` records it)
+- `ENTITY_MC_DOCS_SOURCE_ID` (Entity file source for evidence links; default `workspace`)
+- `ENTITY_MC_REVIEW_EXEC_LOG` (review worker log override; otherwise uses the shared execution log)
+- `ENTITY_MC_DEFAULT_REVIEWER` (peer reviewer identity for new submissions)
+- `ENTITY_MC_HUMAN_REVIEWERS` (comma-separated human identities authorized to decide human-gated reviews)
 
 ## Install
 
@@ -67,7 +73,9 @@ Preferred one-command install from inside the target workspace:
 bash skills/entity-mc/install-auto.sh
 ```
 
-This creates an auto manifest for the current workspace, installs runtime wrappers, writes the Entity MC cron block, installs portable MC/intake setup context into `.entity-mc/context/`, and runs verification.
+This records the current executor search path and resolved binaries in an auto manifest for the current workspace, installs runtime wrappers, writes the Entity MC cron block, installs portable MC/intake setup context into `.entity-mc/context/`, and runs verification.
+
+Automatic cron enablement requires the selected executor to be installed. Use `--install-cron false` to prepare a workspace before its executor is available.
 
 Manual manifest install remains available when you need explicit per-host settings:
 
@@ -171,3 +179,35 @@ Included context:
 - `task-closure-contract.md` — exact review/blocker note requirements.
 
 Keep these files public-safe. Do not add private hostnames, tokens, personal data, or Henry-specific secrets. Put host-specific facts in manifests or local memory, not in the public bundle.
+
+## Dispatch ownership and recovery
+
+Set `ENTITY_MC_DISPATCH_HOST` to the verified output of `hostname`. Each agent must have one authoritative dispatch host, login home, canonical MC URL, `ENTITY_MC_STATE_DIR`, and managed cron block. The host-wide lock prevents overlapping dispatch calls; durable reservations belong to that one state directory. Running another installation of the same agent with a different state directory is unsupported. Hold the old scheduler and reconcile its reservations before changing any owner configuration because the task update API does not provide a distributed compare-and-swap claim.
+
+Set the Python executable, runtime binary, execution path, and profile directories explicitly in the manifest. Failures before a worker starts use a bounded retry budget with backoff. Once a worker has started, an uncertain exit requires reconciliation because it may already have performed actions. Inspect the attempt record, task output, process identity, and external outcome before retrying. A substantive request-fix receipt can begin a fresh bounded producer cycle.
+
+During migration, reconcile legacy trackers. Remove a tracker only when the task records its outcome; unresolved or malformed trackers hold dispatch for review. Configure human reviewer identities with `ENTITY_MC_HUMAN_REVIEWERS`; automation always preserves tasks marked `human_gate_required`, `requires_human`, or `review_type: human`.
+
+Health requires fresh outcome telemetry for every enabled belt. `ENTITY_MC_HEALTH_INVENTORY` points to JSON containing an `agents` array with `name`, `host` (or `local`), `state_dir`, `cron_log`, and `enabled_belts`. Maintenance holds use `held: true` and an optional `held_reason`. A fresh cron log alone does not establish health. Set `ENTITY_MC_HEALTH_NO_NOTIFY=1` for local verification.
+
+`mc.sh review <id> "output" [--risk low|medium|high] [--reviewer NAME]` records a new review submission. The assigned independent reviewer uses `accept-review` or `request-fix` with a substantive note. Existing human gates survive resubmission, and `deliver` cannot bypass them. `mc.sh block <id> "blocker, recovery attempted, and required next action"` records blocked work without moving it back to todo.
+
+Python 3.9+, Bash, jq, curl, and the selected executor must be available. Set `ENTITY_MC_PYTHON_BIN`, `ENTITY_MC_EXEC_PATH`, and `ENTITY_MC_OPENCLAW_BIN` or `ENTITY_MC_HERMES_BIN` when cron cannot discover them. A Codex-compatible adapter must explicitly implement `--preflight` and the launch contract; unsupported executors fail before task mutation. `ENTITY_MC_MODEL_CONFIG` optionally supplies `default_model`, `aliases`, `inventory` keyed by lowercase agent, and `fallbacks`; `ENTITY_MC_DEFAULT_MODEL` provides a simple default.
+
+Run the offline fixture suite from the repository root with `python3 -m pytest -q entity-mc/tests`. It uses temporary workspaces, mock crontabs, fake runtimes, and loopback HTTP fixtures.
+
+
+### Decide the inspected review submission
+
+Read the task and its `metadata.review_submitted_at`, inspect that submission's artifacts, then pass the same generation when recording a decision:
+
+```bash
+mc.sh accept-review <id> "What you verified" --submission <review_submitted_at>
+mc.sh request-fix <id> "Specific defect and required correction" --submission <review_submitted_at>
+```
+
+The review dispatcher supplies this generation in both its command examples and `ENTITY_MC_REVIEW_SUBMISSION`. A versioned submission requires the flag or inherited value; a changed generation stops the decision before mutation. Legacy submissions with no generation use `--submission ''`. Serialize submission changes with review decisions because the task API does not provide conditional writes.
+
+Review submissions record the actual submitting actor, preserve existing human approval gates, and keep producer and reviewer independent. Direct delivery cannot bypass a human gate.
+
+Submit verified proof when entering review with `mc.sh review <id> "output and verification" --reviewer <independent-reviewer> --proof <artifact-ref>`. This sends the explicit artifact reference in `metadata.proof_ref` for the product's review-entry policy. Without `--proof`, existing proof fields are preserved; the CLI does not invent proof. Inspect the referenced artifact before submitting it.

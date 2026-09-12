@@ -237,16 +237,6 @@ $(head -100 "$REAL_PATH")
 "
     done <<< "$QMD_RESULTS"
   fi
-else
-  # Fallback: legacy keyword matching when qmd is not available
-  # Project-specific context discovery is handled by qmd above
-  # or by the agent reading its workspace memory files.
-  fi
-  fi
-  # Soteria / insurance
-  fi
-  # OpenClaw / gateway / infra
-  fi
 fi
 
 if [ -n "$INFERRED_CTX" ]; then

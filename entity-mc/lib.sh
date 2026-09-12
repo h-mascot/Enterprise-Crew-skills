@@ -76,38 +76,86 @@ entity_mc_load_manifest() {
   ENTITY_MC_INSTALL_CRON="${ENTITY_MC_INSTALL_CRON_OVERRIDE:-${ENTITY_MC_INSTALL_CRON:-true}}"
   ENTITY_MC_BASH_BIN="${ENTITY_MC_BASH_BIN:-bash}"
   ENTITY_MC_ENABLE_AUTO_PULL="${ENTITY_MC_ENABLE_AUTO_PULL:-true}"
+  ENTITY_MC_ENABLE_REVIEW_PULL="${ENTITY_MC_ENABLE_REVIEW_PULL:-false}"
   ENTITY_MC_ENABLE_STALL_CHECK="${ENTITY_MC_ENABLE_STALL_CHECK:-true}"
   ENTITY_MC_ENABLE_INTAKE="${ENTITY_MC_ENABLE_INTAKE:-false}"
   ENTITY_MC_AUTO_PULL_SCHEDULE="${ENTITY_MC_AUTO_PULL_SCHEDULE:-*/30 * * * *}"
+  ENTITY_MC_REVIEW_PULL_SCHEDULE="${ENTITY_MC_REVIEW_PULL_SCHEDULE:-*/15 * * * *}"
   ENTITY_MC_STALL_CHECK_SCHEDULE="${ENTITY_MC_STALL_CHECK_SCHEDULE:-0 */2 * * *}"
   ENTITY_MC_INTAKE_SCHEDULE="${ENTITY_MC_INTAKE_SCHEDULE:-*/15 * * * *}"
   ENTITY_MC_PROFILE_NAME="${ENTITY_MC_PROFILE_NAME:-}"
   ENTITY_MC_MC_URL="${ENTITY_MC_MC_URL:-http://localhost:3000}"
+  ENTITY_MC_CRON_CWD="${ENTITY_MC_CRON_CWD:-$ENTITY_MC_TARGET_HOME}"
   ENTITY_MC_CRON_TAG="${ENTITY_MC_CRON_TAG:-ENTITY_MC:${ENTITY_MC_AGENT_NAME}}"
   ENTITY_MC_RELEASE_DIR="$ENTITY_MC_RELEASES_DIR/$ENTITY_MC_VERSION"
   ENTITY_MC_RELEASE_CONTEXT_DIR="$ENTITY_MC_RELEASE_DIR/context"
 }
 
-entity_mc_runtime_files() {
-  cat <<'EOF'
-mc.sh
-mc-auto-pull.sh
-mc-assign-model.sh
-mc-build-context.sh
-mc-stall-check.sh
-mc-intake.sh
-EOF
+entity_mc_entrypoints() {
+  printf '%s\n' \
+    mc.sh \
+    mc-auto-pull.sh \
+    mc-review-pull.sh \
+    mc-assign-model.sh \
+    mc-build-context.sh \
+    mc-stall-check.sh \
+    mc-intake.sh \
+    mc-health-check.sh
 }
 
+entity_mc_runtime_files() {
+  entity_mc_entrypoints
+  local module
+  for module in "$ENTITY_MC_SOURCE_SCRIPTS_DIR"/*.py; do
+    [[ -f "$module" ]] || continue
+    basename "$module"
+  done
+}
+
+entity_mc_release_inventory() {
+  entity_mc_runtime_files
+  while IFS= read -r file; do printf 'context/%s\n' "$file"; done <<< "$(entity_mc_context_files)"
+  printf '%s\n' VERSION MANIFEST_PATH
+}
 
 entity_mc_context_files() {
-  cat <<'EOF'
-mc-operating-rules.md
-entity-mc-context.md
-mc-task-intake-policy.md
-mc-intake-setup.md
-task-closure-contract.md
-EOF
+  printf '%s\n' mc-operating-rules.md entity-mc-context.md mc-task-intake-policy.md mc-intake-setup.md task-closure-contract.md
+}
+
+entity_mc_validate_release_inventory() {
+  local release_dir="$1" expected_file
+  expected_file="$(mktemp)"
+  entity_mc_release_inventory > "$expected_file"
+  if ! "${ENTITY_MC_PYTHON_BIN:-python3}" -c '
+import pathlib
+import sys
+
+release = pathlib.Path(sys.argv[1])
+expected = set(pathlib.Path(sys.argv[2]).read_text().splitlines())
+actual = {str(path.relative_to(release)) for path in release.rglob("*") if path.is_file()}
+unexpected = sorted(actual - expected)
+missing = sorted(expected - actual)
+if unexpected:
+    print(f"FATAL: release {release.name} contains unexpected file: {unexpected[0]}", file=sys.stderr)
+    raise SystemExit(1)
+if missing:
+    print(f"FATAL: release {release.name} is missing expected file: {missing[0]}", file=sys.stderr)
+    raise SystemExit(1)
+' "$release_dir" "$expected_file"
+  then
+    rm -f "$expected_file"
+    return 1
+  fi
+  rm -f "$expected_file"
+}
+
+entity_mc_validate_rollback_release() {
+  local release_dir="$1"
+  [[ -f "$release_dir/VERSION" ]] || {
+    echo "FATAL: rollback release is missing VERSION" >&2
+    return 1
+  }
+  [[ -f "$release_dir/mc.sh" ]] || { echo "FATAL: rollback release is missing mc.sh" >&2; return 1; }
 }
 
 entity_mc_log() {
@@ -115,11 +163,29 @@ entity_mc_log() {
 }
 
 entity_mc_ensure_dirs() {
-  mkdir -p "$ENTITY_MC_TARGET_SCRIPTS_DIR" "$ENTITY_MC_STATE_DIR" "$ENTITY_MC_RELEASES_DIR" "$ENTITY_MC_BACKUP_DIR" "$ENTITY_MC_CONTEXT_DIR"
+  mkdir -p "$ENTITY_MC_TARGET_SCRIPTS_DIR" "$ENTITY_MC_STATE_DIR" "$ENTITY_MC_RELEASES_DIR" "$ENTITY_MC_BACKUP_DIR"
 }
 
 entity_mc_stage_release() {
-  mkdir -p "$ENTITY_MC_RELEASE_DIR"
+  local staged file runtime_files
+  runtime_files="$(entity_mc_runtime_files)"
+  if [[ -d "$ENTITY_MC_RELEASE_DIR" ]]; then
+    entity_mc_validate_release_inventory "$ENTITY_MC_RELEASE_DIR" || return 1
+    while IFS= read -r file; do
+      if ! cmp -s "$ENTITY_MC_SOURCE_SCRIPTS_DIR/$file" "$ENTITY_MC_RELEASE_DIR/$file"; then
+        echo "FATAL: release $ENTITY_MC_VERSION already exists with different content; bump VERSION." >&2
+        return 1
+      fi
+    done <<< "$runtime_files"
+    while IFS= read -r file; do
+      if ! cmp -s "$ENTITY_MC_SOURCE_CONTEXT_DIR/$file" "$ENTITY_MC_RELEASE_CONTEXT_DIR/$file"; then
+        echo "FATAL: release $ENTITY_MC_VERSION already exists with different context; bump VERSION." >&2
+        return 1
+      fi
+    done <<< "$(entity_mc_context_files)"
+    return 0
+  fi
+  staged="$(mktemp -d "$ENTITY_MC_RELEASES_DIR/.staging.XXXXXX")"
   # Guard: verify source scripts are real scripts, not wrapper stubs.
   # If the workspace scripts/ already contains wrappers (from a prior install on
   # the same machine), refuse to stage them — that creates an infinite exec loop.
@@ -131,137 +197,154 @@ entity_mc_stage_release() {
     exit 1
   fi
   while IFS= read -r file; do
-    install -m 0755 "$ENTITY_MC_SOURCE_SCRIPTS_DIR/$file" "$ENTITY_MC_RELEASE_DIR/$file"
-  done < <(entity_mc_runtime_files)
-  mkdir -p "$ENTITY_MC_RELEASE_CONTEXT_DIR"
-  while IFS= read -r file; do
-    install -m 0644 "$ENTITY_MC_SOURCE_CONTEXT_DIR/$file" "$ENTITY_MC_RELEASE_CONTEXT_DIR/$file"
-  done < <(entity_mc_context_files)
-  printf '%s\n' "$ENTITY_MC_VERSION" > "$ENTITY_MC_RELEASE_DIR/VERSION"
-  printf '%s\n' "$ENTITY_MC_MANIFEST_PATH" > "$ENTITY_MC_RELEASE_DIR/MANIFEST_PATH"
+    install -m 0755 "$ENTITY_MC_SOURCE_SCRIPTS_DIR/$file" "$staged/$file"
+  done <<< "$runtime_files"
+  mkdir -p "$staged/context"
+  while IFS= read -r file; do install -m 0644 "$ENTITY_MC_SOURCE_CONTEXT_DIR/$file" "$staged/context/$file"; done <<< "$(entity_mc_context_files)"
+  printf '%s\n' "$ENTITY_MC_VERSION" > "$staged/VERSION"
+  printf '%s\n' "$ENTITY_MC_MANIFEST_PATH" > "$staged/MANIFEST_PATH"
+  mv "$staged" "$ENTITY_MC_RELEASE_DIR"
 }
 
 entity_mc_snapshot_previous() {
   if [[ -L "$ENTITY_MC_CURRENT_LINK" || -d "$ENTITY_MC_RUNTIME_DIR" ]]; then
     local previous_target=""
     if [[ -L "$ENTITY_MC_CURRENT_LINK" ]]; then
-      previous_target="$(readlink -f "$ENTITY_MC_CURRENT_LINK")"
+      previous_target="$(readlink -f "$ENTITY_MC_CURRENT_LINK" 2>/dev/null || true)"
     elif [[ -d "$ENTITY_MC_RUNTIME_DIR" ]]; then
       previous_target="$ENTITY_MC_RUNTIME_DIR"
     fi
-    if [[ -n "$previous_target" && -d "$previous_target" ]]; then
+    if [[ -n "$previous_target" && -d "$previous_target" && "$previous_target" != "$ENTITY_MC_RELEASE_DIR" ]]; then
       printf '%s\n' "$previous_target" > "$ENTITY_MC_STATE_DIR/previous-release-path"
     fi
   fi
 }
 
 entity_mc_activate_release() {
-  ln -sfn "$ENTITY_MC_RELEASE_DIR" "$ENTITY_MC_CURRENT_LINK"
-  rm -rf "$ENTITY_MC_RUNTIME_DIR"
-  mkdir -p "$ENTITY_MC_RUNTIME_DIR"
-  while IFS= read -r file; do
-    ln -sfn "$ENTITY_MC_RELEASE_DIR/$file" "$ENTITY_MC_RUNTIME_DIR/$file"
-  done < <(entity_mc_runtime_files)
-  rm -rf "$ENTITY_MC_CONTEXT_DIR"
+  "${ENTITY_MC_PYTHON_BIN:-python3}" -c '
+import os, sys
+link, target = sys.argv[1:]
+temporary = link + ".new-" + str(os.getpid())
+os.symlink(target, temporary)
+os.replace(temporary, link)
+' "$ENTITY_MC_CURRENT_LINK" "$ENTITY_MC_RELEASE_DIR"
+  # Preserve the old compatibility tree; existing wrappers follow runtime.
+  if [[ -e "$ENTITY_MC_RUNTIME_DIR" || -L "$ENTITY_MC_RUNTIME_DIR" ]]; then
+    local runtime_backup="$ENTITY_MC_BACKUP_DIR/runtime-$(date +%s)-$$"
+    mv "$ENTITY_MC_RUNTIME_DIR" "$runtime_backup"
+    if [[ -f "$ENTITY_MC_STATE_DIR/previous-release-path" ]] &&
+       [[ "$(cat "$ENTITY_MC_STATE_DIR/previous-release-path")" == "$ENTITY_MC_RUNTIME_DIR" ]]; then
+      printf '%s\n' "$runtime_backup" > "$ENTITY_MC_STATE_DIR/previous-release-path"
+    fi
+  fi
+  ln -s "$ENTITY_MC_CURRENT_LINK" "$ENTITY_MC_RUNTIME_DIR"
+  ENTITY_MC_RELEASE_CONTEXT_DIR="$ENTITY_MC_RELEASE_DIR/context"
   mkdir -p "$ENTITY_MC_CONTEXT_DIR"
   while IFS= read -r file; do
-    ln -sfn "$ENTITY_MC_RELEASE_CONTEXT_DIR/$file" "$ENTITY_MC_CONTEXT_DIR/$file"
-  done < <(entity_mc_context_files)
+    if [[ -f "$ENTITY_MC_RELEASE_CONTEXT_DIR/$file" ]]; then
+      ln -sfn "$ENTITY_MC_RELEASE_CONTEXT_DIR/$file" "$ENTITY_MC_CONTEXT_DIR/$file"
+    else
+      rm -f "$ENTITY_MC_CONTEXT_DIR/$file"
+    fi
+  done <<< "$(entity_mc_context_files)"
   printf '%s\n' "$ENTITY_MC_VERSION" > "$ENTITY_MC_STATE_DIR/current-version"
 }
 
-# Copy portable MC context files into the workspace memory/ directory
-# so agents pick them up during session startup.
-entity_mc_install_memory() {
-  local _mem_dir="$ENTITY_MC_TARGET_HOME/memory/entity-mc"
-  mkdir -p "$_mem_dir"
-  while IFS= read -r file; do
-    if [[ -f "$ENTITY_MC_RELEASE_CONTEXT_DIR/$file" ]]; then
-      install -m 0644 "$ENTITY_MC_RELEASE_CONTEXT_DIR/$file" "$_mem_dir/$file"
-      entity_mc_log "memory: $_mem_dir/$file"
-    fi
-  done < <(entity_mc_context_files)
-}
-
-# Append a startup read instruction to AGENTS.md so the agent reads
-# the Entity MC memory files on every session start.
-entity_mc_patch_agents_md() {
-  local _agents="$ENTITY_MC_TARGET_HOME/AGENTS.md"
-  local _marker="<!-- ENTITY_MC_MEMORY_START -->"
-  local _marker_end="<!-- ENTITY_MC_MEMORY_END -->"
-
-  # If the marker block already exists, replace it
-  if [[ -f "$_agents" ]] && grep -q "$_marker" "$_agents" 2>/dev/null; then
-    local _tmp
-    _tmp="$(mktemp)"
-    awk -v start="$_marker" -v end="$_marker_end" -v block="$_marker\nRead memory/entity-mc/ for MC operating rules, intake policy, and closure contract.\n$_marker_end" '
-      $0 == start { print block; skip=1; next }
-      $0 == end { skip=0; next }
-      !skip { print }
-    ' "$_agents" > "$_tmp"
-    mv "$_tmp" "$_agents"
-    entity_mc_log "agents-md: updated existing marker block"
-    return 0
-  fi
-
-  # Otherwise append the block
-  cat >> "$_agents" <<'AGENTSEOF'
-
-<!-- ENTITY_MC_MEMORY_START -->
-Read `memory/entity-mc/` for MC operating rules, intake policy, and closure contract.
-<!-- ENTITY_MC_MEMORY_END -->
-AGENTSEOF
-  entity_mc_log "agents-md: appended startup read block"
-}
-
 entity_mc_install_wrappers() {
+  local entrypoints
+  entrypoints="$(entity_mc_entrypoints)"
   while IFS= read -r file; do
     local target="$ENTITY_MC_TARGET_SCRIPTS_DIR/$file"
+    if [[ ! -f "$ENTITY_MC_RELEASE_DIR/$file" ]]; then rm -f "$target"; continue; fi
+    local wrapper_path="$target" staged_wrapper
     if [[ "$ENTITY_MC_MODE" == "symlink" ]]; then
-      ln -sfn "$ENTITY_MC_RUNTIME_DIR/$file" "$target"
-    else
-      cat > "$target" <<EOF
-#!/usr/bin/env bash
-exec "$ENTITY_MC_BASH_BIN" "$ENTITY_MC_RUNTIME_DIR/$file" "\$@"
-EOF
-      chmod 0755 "$target"
+      mkdir -p "$ENTITY_MC_STATE_DIR/launchers"
+      wrapper_path="$ENTITY_MC_STATE_DIR/launchers/$file"
     fi
-  done < <(entity_mc_runtime_files)
+    staged_wrapper="$(mktemp "${wrapper_path}.new.XXXXXX")"
+    entity_mc_render_wrapper "$file" > "$staged_wrapper"
+    chmod 0755 "$staged_wrapper"
+    mv -f "$staged_wrapper" "$wrapper_path"
+    [[ "$ENTITY_MC_MODE" != "symlink" ]] || ln -sfn "$wrapper_path" "$target"
+  done <<< "$entrypoints"
+}
+
+entity_mc_render_wrapper() {
+  local file="$1" setting value
+  printf '%s\n' '#!/usr/bin/env bash'
+  printf 'export ENTITY_MC_AGENT_NAME=%q\n' "$ENTITY_MC_AGENT_NAME"
+  printf 'export MC_USER="${MC_USER:-%s}"\n' "$ENTITY_MC_AGENT_NAME"
+  printf 'export ENTITY_MC_TARGET_HOME=%q\n' "$ENTITY_MC_TARGET_HOME"
+  printf 'export ENTITY_MC_TARGET_SCRIPTS_DIR=%q\n' "$ENTITY_MC_TARGET_SCRIPTS_DIR"
+  printf 'export ENTITY_MC_STATE_DIR=%q\n' "$ENTITY_MC_STATE_DIR"
+  printf 'export ENTITY_MC_MC_URL=%q\n' "$ENTITY_MC_MC_URL"
+  printf 'export ENTITY_MC_RUNTIME=%q\n' "${ENTITY_MC_RUNTIME:-openclaw}"
+  printf 'export ENTITY_MC_OPENCLAW_BIN=%q\n' "${ENTITY_MC_OPENCLAW_BIN:-}"
+  printf 'export ENTITY_MC_HERMES_BIN=%q\n' "${ENTITY_MC_HERMES_BIN:-}"
+  printf 'export ENTITY_MC_EXEC_LOG="${ENTITY_MC_EXEC_LOG:-%s/exec.log}"\n' "$ENTITY_MC_STATE_DIR"
+  for setting in ENTITY_MC_DOCS_SOURCE_ID ENTITY_MC_REVIEW_EXEC_LOG ENTITY_MC_PYTHON_BIN ENTITY_MC_HEALTH_INVENTORY ENTITY_MC_HEALTH_NO_NOTIFY ENTITY_MC_MAX_ATTEMPTS ENTITY_MC_RETRY_BACKOFF_SECS ENTITY_MC_REVIEW_MAX_ATTEMPTS ENTITY_MC_REVIEW_BACKOFF_SECS ENTITY_MC_REVIEW_STARTUP_GRACE_SECS ENTITY_MC_REVIEW_MAX_RUNTIME_SECS ENTITY_MC_REVIEW_PULL_LIMIT ENTITY_MC_DISPATCH_HOST ENTITY_MC_DEFAULT_REVIEWER ENTITY_MC_HUMAN_REVIEWERS ENTITY_MC_MODEL_CONFIG ENTITY_MC_DEFAULT_MODEL; do
+    value="${!setting:-}"
+    [[ -z "$value" ]] || printf 'export %s=%q\n' "$setting" "$value"
+  done
+  [[ -z "${ENTITY_MC_EXEC_PATH:-}" ]] || printf 'export PATH=%q\n' "$ENTITY_MC_EXEC_PATH"
+  [[ -z "${ENTITY_MC_HERMES_HOME:-}" ]] || printf 'export HERMES_HOME=%q\n' "$ENTITY_MC_HERMES_HOME"
+  [[ -z "${ENTITY_MC_OPENCLAW_STATE_DIR:-}" ]] || printf 'export OPENCLAW_STATE_DIR=%q\n' "$ENTITY_MC_OPENCLAW_STATE_DIR"
+  [[ -z "${ENTITY_MC_OPENCLAW_CONFIG_PATH:-}" ]] || printf 'export OPENCLAW_CONFIG_PATH=%q\n' "$ENTITY_MC_OPENCLAW_CONFIG_PATH"
+  printf 'exec %q %q "$@"\n' "$ENTITY_MC_BASH_BIN" "$ENTITY_MC_CURRENT_LINK/$file"
+}
+
+entity_mc_install_memory() {
+  local memory_dir="$ENTITY_MC_TARGET_HOME/memory/entity-mc" file
+  mkdir -p "$memory_dir"
+  while IFS= read -r file; do
+    [[ ! -f "$ENTITY_MC_RELEASE_CONTEXT_DIR/$file" ]] || install -m 0644 "$ENTITY_MC_RELEASE_CONTEXT_DIR/$file" "$memory_dir/$file"
+  done <<< "$(entity_mc_context_files)"
+}
+
+entity_mc_patch_agents_md() {
+  local agents="$ENTITY_MC_TARGET_HOME/AGENTS.md" marker='<!-- ENTITY_MC_MEMORY_START -->'
+  [[ -f "$agents" ]] || : > "$agents"
+  grep -q "$marker" "$agents" 2>/dev/null || printf '\n%s\nRead `memory/entity-mc/` for Mission Control operating rules.\n<!-- ENTITY_MC_MEMORY_END -->\n' "$marker" >> "$agents"
 }
 
 entity_mc_render_cron_block() {
-  # Build env prefix for runtime/binary overrides
-  local _env_prefix=""
-  [ -n "${ENTITY_MC_RUNTIME:-}" ] && _env_prefix="${_env_prefix}ENTITY_MC_RUNTIME=${ENTITY_MC_RUNTIME} "
-  [ -n "${ENTITY_MC_OPENCLAW_BIN:-}" ] && _env_prefix="${_env_prefix}ENTITY_MC_OPENCLAW_BIN=${ENTITY_MC_OPENCLAW_BIN} "
-  [ -n "${ENTITY_MC_HERMES_BIN:-}" ] && _env_prefix="${_env_prefix}ENTITY_MC_HERMES_BIN=${ENTITY_MC_HERMES_BIN} "
-  [ -n "${ENTITY_MC_STATE_DIR:-}" ] && _env_prefix="${_env_prefix}ENTITY_MC_EXEC_LOG=${ENTITY_MC_STATE_DIR}/exec.log "
-
+  # Each installed launcher already carries the manifest environment.
   printf '# BEGIN %s\n' "$ENTITY_MC_CRON_TAG"
   if [[ "$ENTITY_MC_ENABLE_AUTO_PULL" == "true" ]]; then
-    printf '%s cd %q && %sMC_USER=%q %q %q %q >> %q 2>&1\n' \
+    printf '%s cd %q && MC_USER=%q %q %q %q >> %q 2>&1\n' \
       "$ENTITY_MC_AUTO_PULL_SCHEDULE" \
-      "$ENTITY_MC_WORKSPACE" \
-      "$_env_prefix" \
+      "$ENTITY_MC_CRON_CWD" \
       "$ENTITY_MC_AGENT_NAME" \
       "$ENTITY_MC_BASH_BIN" \
       "$ENTITY_MC_TARGET_SCRIPTS_DIR/mc-auto-pull.sh" \
       "$ENTITY_MC_AGENT_NAME" \
       "$ENTITY_MC_STATE_DIR/cron.log"
   fi
+  if [[ "$ENTITY_MC_ENABLE_REVIEW_PULL" == "true" ]]; then
+    printf '%s cd %q && MC_USER=%q %q %q %q >> %q 2>&1\n' \
+      "$ENTITY_MC_REVIEW_PULL_SCHEDULE" \
+      "$ENTITY_MC_CRON_CWD" \
+      "$ENTITY_MC_AGENT_NAME" \
+      "$ENTITY_MC_BASH_BIN" \
+      "$ENTITY_MC_TARGET_SCRIPTS_DIR/mc-review-pull.sh" \
+      "$ENTITY_MC_AGENT_NAME" \
+      "$ENTITY_MC_STATE_DIR/cron.log"
+  fi
   if [[ "$ENTITY_MC_ENABLE_STALL_CHECK" == "true" ]]; then
-    printf '%s cd %q && MC_USER=%q %q %q >> %q 2>&1\n' \
+    printf '%s cd %q && ENTITY_MC_MC_URL=%q MC_USER=%q %q %q >> %q 2>&1\n' \
       "$ENTITY_MC_STALL_CHECK_SCHEDULE" \
-      "$ENTITY_MC_WORKSPACE" \
+      "$ENTITY_MC_CRON_CWD" \
+      "$ENTITY_MC_MC_URL" \
       "$ENTITY_MC_AGENT_NAME" \
       "$ENTITY_MC_BASH_BIN" \
       "$ENTITY_MC_TARGET_SCRIPTS_DIR/mc-stall-check.sh" \
       "$ENTITY_MC_STATE_DIR/cron.log"
   fi
   if [[ "$ENTITY_MC_ENABLE_INTAKE" == "true" ]]; then
-    printf '%s cd %q && MC_USER=%q %q %q scan-file %q >> %q 2>&1\n' \
+    printf '%s cd %q && ENTITY_MC_MC_URL=%q MC_USER=%q %q %q scan-file %q >> %q 2>&1\n' \
       "$ENTITY_MC_INTAKE_SCHEDULE" \
-      "$ENTITY_MC_WORKSPACE" \
+      "$ENTITY_MC_CRON_CWD" \
+      "$ENTITY_MC_MC_URL" \
       "$ENTITY_MC_AGENT_NAME" \
       "$ENTITY_MC_BASH_BIN" \
       "$ENTITY_MC_TARGET_SCRIPTS_DIR/mc-intake.sh" \
@@ -310,7 +393,6 @@ entity_mc_status_json() {
     --arg target_home "$ENTITY_MC_TARGET_HOME" \
     --arg scripts_dir "$ENTITY_MC_TARGET_SCRIPTS_DIR" \
     --arg state_dir "$ENTITY_MC_STATE_DIR" \
-    --arg context_dir "${ENTITY_MC_CONTEXT_DIR:-}" \
     --arg profile_name "$ENTITY_MC_PROFILE_NAME" \
-    '{agent:$agent, version:$version, mode:$mode, target_home:$target_home, scripts_dir:$scripts_dir, state_dir:$state_dir, context_dir:$context_dir, profile_name:$profile_name}'
+    '{agent:$agent, version:$version, mode:$mode, target_home:$target_home, scripts_dir:$scripts_dir, state_dir:$state_dir, profile_name:$profile_name}'
 }

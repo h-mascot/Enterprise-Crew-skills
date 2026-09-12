@@ -29,6 +29,8 @@ MODE="copy"
 AUTO_PULL_SCHEDULE="*/10 * * * *"
 STALL_CHECK_SCHEDULE="0 */2 * * *"
 ENABLE_INTAKE="false"
+EXEC_PATH="${ENTITY_MC_EXEC_PATH:-$PATH}"
+RUNTIME="${ENTITY_MC_RUNTIME:-openclaw}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -76,6 +78,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Cron must use the same executable search path as this installation shell.
+case "$RUNTIME" in
+  hermes) RUNTIME_COMMAND="${ENTITY_MC_HERMES_BIN:-hermes}"; RUNTIME_KEY=ENTITY_MC_HERMES_BIN ;;
+  openclaw) RUNTIME_COMMAND="${ENTITY_MC_OPENCLAW_BIN:-openclaw}"; RUNTIME_KEY=ENTITY_MC_OPENCLAW_BIN ;;
+  codex) RUNTIME_COMMAND="${ENTITY_MC_OPENCLAW_BIN:-}"; RUNTIME_KEY=ENTITY_MC_OPENCLAW_BIN ;;
+  *) echo "Unsupported runtime: $RUNTIME" >&2; exit 1 ;;
+esac
+RUNTIME_BIN="$(PATH="$EXEC_PATH" command -v "$RUNTIME_COMMAND" 2>/dev/null || true)"
+if [[ "$INSTALL_CRON" == "true" && ( -z "$RUNTIME_BIN" || ! -x "$RUNTIME_BIN" ) ]]; then
+  echo "Cannot enable cron without an executable $RUNTIME runtime; configure $RUNTIME_KEY or install with --install-cron false." >&2
+  exit 1
+fi
+
 WORKSPACE="$(mkdir -p "$WORKSPACE" && cd "$WORKSPACE" && pwd)"
 SKILLS_DIR="$WORKSPACE/skills"
 TARGET_SKILL_DIR="$SKILLS_DIR/entity-mc"
@@ -118,6 +133,7 @@ ENTITY_MC_AGENT_NAME="$AGENT"
 ENTITY_MC_TARGET_HOME="$WORKSPACE"
 ENTITY_MC_TARGET_SCRIPTS_DIR="$WORKSPACE/scripts"
 ENTITY_MC_STATE_DIR="$WORKSPACE/.entity-mc"
+ENTITY_MC_DISPATCH_HOST="$(hostname)"
 ENTITY_MC_MODE="$MODE"
 ENTITY_MC_INSTALL_CRON="$INSTALL_CRON"
 ENTITY_MC_ENABLE_AUTO_PULL="true"
@@ -127,6 +143,17 @@ ENTITY_MC_AUTO_PULL_SCHEDULE="$AUTO_PULL_SCHEDULE"
 ENTITY_MC_STALL_CHECK_SCHEDULE="$STALL_CHECK_SCHEDULE"
 ENTITY_MC_PROFILE_NAME="$(printf '%s' "$AGENT" | tr '[:upper:]' '[:lower:]')"
 EOF
+
+{
+  printf 'ENTITY_MC_EXEC_PATH=%q\n' "$EXEC_PATH"
+  printf 'ENTITY_MC_RUNTIME=%q\n' "$RUNTIME"
+  [[ -z "$RUNTIME_BIN" ]] || printf '%s=%q\n' "$RUNTIME_KEY" "$RUNTIME_BIN"
+  for setting in ENTITY_MC_PYTHON_BIN:python3 ENTITY_MC_NODE_BIN:node ENTITY_MC_BASH_BIN:bash; do
+    key="${setting%%:*}"
+    binary="$(PATH="$EXEC_PATH" command -v "${!key:-${setting#*:}}" 2>/dev/null || true)"
+    [[ -z "$binary" ]] || printf '%s=%q\n' "$key" "$binary"
+  done
+} >> "$MANIFEST"
 
 if [[ -n "$MC_URL" ]]; then
   printf 'ENTITY_MC_MC_URL="%s"\n' "$MC_URL" >> "$MANIFEST"

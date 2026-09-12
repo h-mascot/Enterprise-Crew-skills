@@ -16,7 +16,5 @@ entity_mc_install_memory
 entity_mc_patch_agents_md
 entity_mc_install_cron_block
 
-cat <<EOF
-INSTALL_OK
-$(entity_mc_status_json)
-EOF
+printf '%s\n' 'INSTALL_OK'
+entity_mc_status_json
